@@ -1,10 +1,5 @@
-import json
 import subprocess
 import netifaces
-import ipaddress
-import networkx as nx
-import os
-from datetime import datetime
 
 def get_network_info():
     interfaces = {}

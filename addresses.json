@@ -1,0 +1,47 @@
+[
+    {
+        "address": "2001:db8:1234:5678:4cb8:c0af:4aa6:f239",
+        "interface": "ipwrap0",
+        "tag": "dev-test",
+        "status": "active",
+        "created_at": "2026-06-02 18:18:37",
+        "ttl_seconds": 60,
+        "expires_at": "2026-06-02 18:19:37"
+    },
+    {
+        "address": "2001:db8:1234:5678:edcd:7bb9:881f:254c",
+        "interface": "ipwrap0",
+        "tag": "dev-test",
+        "status": "active",
+        "created_at": "2026-06-02 18:18:37",
+        "ttl_seconds": 60,
+        "expires_at": "2026-06-02 18:19:37"
+    },
+    {
+        "address": "2001:db8:1234:5678:8d08:53a7:f53c:ba44",
+        "interface": "ipwrap0",
+        "tag": "dev-test",
+        "status": "active",
+        "created_at": "2026-06-02 18:18:37",
+        "ttl_seconds": 60,
+        "expires_at": "2026-06-02 18:19:37"
+    },
+    {
+        "address": "2001:db8:1234:5678:605a:39c1:67ce:c1cd",
+        "interface": "ipwrap0",
+        "tag": "dev-test",
+        "status": "active",
+        "created_at": "2026-06-02 18:18:37",
+        "ttl_seconds": 60,
+        "expires_at": "2026-06-02 18:19:37"
+    },
+    {
+        "address": "2001:db8:1234:5678:a441:c1cd:bcaf:305c",
+        "interface": "ipwrap0",
+        "tag": "dev-test",
+        "status": "active",
+        "created_at": "2026-06-02 18:18:37",
+        "ttl_seconds": 60,
+        "expires_at": "2026-06-02 18:19:37"
+    }
+]
