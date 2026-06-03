@@ -1,6 +1,3 @@
-"""
-resolve.py - Domain → mesh-Adresse → IPv6, mit Fallbacks
-"""
 import sys
 import socket
 from registry import load_registry, SUFFIX
@@ -22,7 +19,6 @@ def _is_valid_ipv4(addr: str) -> bool:
         return False
 
 def _dns_lookup(name: str) -> dict | None:
-    """Fragt echten DNS-Server an."""
     try:
         results = socket.getaddrinfo(name, None, socket.AF_INET6)
         if results:
@@ -47,40 +43,33 @@ def resolve(name: str, dns_fallback: bool = True) -> dict | None:
 
     name = name.strip().lower()
 
-    # 1. Direkte IPv6
     if _is_valid_ipv6(name):
         return {"address": None, "ipv6": name, "port": None, "source": "direct-ipv6"}
 
-    # 2. Direkte IPv4
     if _is_valid_ipv4(name):
         return {"address": None, "ipv6": None, "ipv4": name, "port": None, "source": "direct-ipv4"}
 
     reg = load_registry()
 
-    # 3. Exakter Treffer in Registry
     if name in reg:
         return {**reg[name], "source": "registry"}
 
-    # 4. Registry ohne .mesh suffix
     if name.endswith(SUFFIX):
         without = name[:-len(SUFFIX)]
         if without in reg:
             return {**reg[without], "source": "registry"}
 
-    # 5. Registry mit .mesh suffix
     if not name.endswith(SUFFIX):
         with_suffix = name + SUFFIX
         if with_suffix in reg:
             return {**reg[with_suffix], "source": "registry"}
 
-    # 6. Partial match — nur hostname-teil
     matches = [k for k in reg if k.startswith(name)]
     if len(matches) == 1:
         return {**reg[matches[0]], "source": "registry-partial", "matched": matches[0]}
     elif len(matches) > 1:
         return {"error": "ambiguous", "matches": matches, "source": None}
 
-    # 7. DNS Fallback
     if dns_fallback and not name.endswith(SUFFIX):
         result = _dns_lookup(name)
         if result:

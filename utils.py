@@ -6,6 +6,9 @@ import re
 from socket import gethostname
 import hashlib
 import time
+from header import MAGIC
+import struct
+
 
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
@@ -116,20 +119,20 @@ def gen_conn_id(pub_bytes: bytes, ts: int) -> int:
 
 REGISTRY_FILE = "./local_registry.json"
 DEFAULT_PORT  = 9999
-MAGIC         = b"MESH"
+
 
 def build_packet(src_mesh: str, dst_mesh: str, payload: bytes) -> bytes:
     return (
-        MAGIC +
-        bytes.fromhex(src_mesh) +
-        bytes.fromhex(dst_mesh) +
-        len(payload).to_bytes(2, "big") +
-        payload
-    )
+            struct.pack("!I", MAGIC) +
+            bytes.fromhex(src_mesh) +
+            bytes.fromhex(dst_mesh) +
+            len(payload).to_bytes(2, "big") +
+            payload
+        )
     
 def parse_packet(data: bytes) -> dict | None:    
-    if len(data) < 36 or data[:4] != MAGIC:
-        return None
+    if len(data) < 36 or data[:4] != struct.pack("!I", MAGIC):
+            return None
     src     = data[4:20].hex()
     dst     = data[20:36].hex()
     length  = int.from_bytes(data[36:38], "big")

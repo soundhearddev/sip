@@ -1,104 +1,92 @@
-"""
-translation.py - Mesh Packet → verschlüsselt → IPv6-ready bytes
-"""
-import os
 import hashlib
-import struct
-import time
+import os
 import secrets
+import struct
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-from fragmentation import fragment_data, parse_packet, CHUNK_SIZE
-from header import PacketType, Priority
+from fragmentation import fragment_data, parse_packet as frag_parse_packet
+from header import build_packet, parse_packet as header_parse_packet, PacketType, Priority, HEADER_SIZE
 
-# ----------------------------
-# Session Key (in Realität per Key Exchange — hier demo)
-# ----------------------------
-SESSION_KEY = secrets.token_bytes(32)  # ChaCha20 braucht 32 Bytes
+_buffer: dict[int, dict] = {}
 
-# ----------------------------
-# Ein Fragment verschlüsseln
-# ChaCha20-Poly1305: Nonce(12) + Ciphertext + Auth-Tag(16) eingebaut
-# ----------------------------
-def encrypt_fragment(raw: bytes, key: bytes, conn_id: int) -> bytes:
-    nonce = secrets.token_bytes(12)
-    aad   = conn_id.to_bytes(8, "big")  # ConnID als Associated Data
-    ct    = ChaCha20Poly1305(key).encrypt(nonce, raw, aad)
-    return nonce + ct
+NONCE_SIZE = 12
 
-def decrypt_fragment(data: bytes, key: bytes, conn_id: int) -> bytes | None:
-    if len(data) < 12:
+
+def encrypt_fragment(raw_packet: bytes, key: bytes) -> bytes:
+    header  = raw_packet[:HEADER_SIZE]
+    payload = raw_packet[HEADER_SIZE:]
+    
+    nonce = secrets.token_bytes(NONCE_SIZE)
+    ct = ChaCha20Poly1305(key).encrypt(nonce, payload, header)
+    return header + nonce + ct
+
+
+def decrypt_fragment(data: bytes, key: bytes) -> bytes | None:
+    if len(data) < HEADER_SIZE + NONCE_SIZE:
         return None
-    nonce, ct = data[:12], data[12:]
-    aad = conn_id.to_bytes(8, "big")
+    header = data[:HEADER_SIZE]
+    nonce  = data[HEADER_SIZE : HEADER_SIZE + NONCE_SIZE]
+    ct     = data[HEADER_SIZE + NONCE_SIZE:]
     try:
-        return ChaCha20Poly1305(key).decrypt(nonce, ct, aad)
+        payload = ChaCha20Poly1305(key).decrypt(nonce, ct, header)
+        return header + payload
     except Exception:
         return None
 
-# ----------------------------
-# Translate: rohe Daten → verschlüsselte IPv6-ready Fragmente
-# ----------------------------
-def translate_outbound(data: bytes, src: str, dst: str, key: bytes = SESSION_KEY) -> list[bytes]:
-    """
-    Nimmt rohe Daten, fragmentiert, verschlüsselt jedes Fragment.
-    Gibt Liste von bytes zurück — fertig zum Senden über IPv6/UDP.
-    """
-    packets  = fragment_data(data, src, dst)
+def derive_path_order(session_key: bytes, n_paths: int, seq: int) -> int:
+    h = hashlib.sha256(session_key + seq.to_bytes(4, "big")).digest()
+    return int.from_bytes(h[:4], "big") % n_paths
+
+
+def translate_outbound(data: bytes, src: str, dst: str,
+                       key: bytes, src_addresses: list[str], conn_id: int) -> list[tuple[bytes, str]]:
+    packets  = fragment_data(data, src, dst, conn_id=conn_id)
+    n_paths  = len(src_addresses)
     outbound = []
 
     for pkt in packets:
+        parsed   = frag_parse_packet(pkt)
+        seq      = parsed["seq"]
+        path_idx = derive_path_order(key, n_paths, seq)
+        src_addr = src_addresses[path_idx]
+        
         encrypted = encrypt_fragment(pkt, key)
-        outbound.append(encrypted)
+        outbound.append((encrypted, src_addr))
 
     return outbound
 
-def translate_inbound(fragments: list[bytes], key: bytes = SESSION_KEY) -> bytes | None:
-    """
-    Nimmt empfangene verschlüsselte Fragmente, entschlüsselt + reassembliert.
-    """
-    parsed_fragments = {}
-
-    for raw in fragments:
-        decrypted = decrypt_fragment(raw, key)
-        if not decrypted:
-            print(f"[!] Fragment entschlüsselung fehlgeschlagen — verworfen")
-            continue
-
-        parsed = parse_packet(decrypted)
-        if not parsed or not parsed["auth_ok"]:
-            print(f"[!] Auth fehlgeschlagen — verworfen")
-            continue
-
-        parsed_fragments[parsed["seq"]] = parsed["payload"]
-
-    if not parsed_fragments:
+def receive(data: bytes, addr: tuple, key: bytes, conn_id: int) -> bytes | None:
+    decrypted = decrypt_fragment(data, key)
+    if not decrypted:
+        print(f"[!] Entschlüsselung fehlgeschlagen von {addr[0]}")
         return None
 
-    return b"".join(parsed_fragments[i] for i in sorted(parsed_fragments))
+    parsed = frag_parse_packet(decrypted)
+    if not parsed or not parsed["auth_ok"]:
+        print(f"[!] Auth fehlgeschlagen — verworfen")
+        return None
 
-# ----------------------------
-# Demo
-# ----------------------------
-if __name__ == "__main__":
-    import hashlib
+    seq     = parsed["seq"]
+    is_last = bool(parsed["flags"] & 0x08)
 
-    src  = "fbfe3f0f1530d41a60a81c6d84a6e4d9"
-    dst  = "a3f9b2c8d4e1f5a6b7c8d9e0f1a2b3c4"
-    data = os.urandom(3500)
+    if conn_id not in _buffer:
+        _buffer[conn_id] = {}
+    _buffer[conn_id][seq] = parsed["payload"]
 
-    print(f"[*] Original         : {len(data)} Bytes")
-    print(f"[*] SHA256           : {hashlib.sha256(data).hexdigest()[:32]}...")
-    print()
+    print(f"[<] seq={seq} conn={conn_id} von {addr[0]} {'(LAST)' if is_last else ''}")
 
-    # Outbound
-    outbound = translate_outbound(data, src, dst)
-    print(f"[*] Fragmente        : {len(outbound)}")
-    print(f"[*] Größe pro Frag.  : ~{len(outbound[0])} Bytes (inkl. Nonce+AuthTag)")
-    print(f"[*] Total outbound   : {sum(len(f) for f in outbound)} Bytes")
-    print()
+    if is_last:
+        frags = _buffer.pop(conn_id)
+        return b"".join(frags[i] for i in sorted(frags))
+    return None
 
-    # Inbound
-    result = translate_inbound(outbound)
-    print(f"[✓] Reassembliert    : {len(result)} Bytes")
-    print(f"[✓] SHA256           : {hashlib.sha256(result).hexdigest()[:32]}...")
-    print(f"[✓] Identisch        : {'JA ✔' if result == data else 'NEIN ❌'}")
+def peek_conn_id(data: bytes) -> int | None:
+    from header import MAGIC
+    if len(data) >= HEADER_SIZE:
+        try:
+            magic, conn_id = struct.unpack("!I36xQ", data[:48])
+            if magic == MAGIC:
+                return conn_id
+        except Exception:
+            pass
+    return None
+

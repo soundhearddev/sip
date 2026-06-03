@@ -1,6 +1,3 @@
-"""
-session.py - X25519 Key Exchange + Session Key Ableitung + Ed25519 Signatur
-"""
 import hashlib
 import secrets
 import time
@@ -10,29 +7,10 @@ from cryptography.hazmat.primitives import serialization
 from netIP import load_public_key, base_address, load_or_create_keys
 from utils import load_env
 import os
+from storage import store_session, get_session, remove_session, clean_expired_addresses
 
 load_env()
 password = os.environ.get("MESH_PASSWORD", "").encode()
-
-
-_sessions: dict[int, dict] = {}
-
-# ----------------------------
-# Session Store
-# ----------------------------
-def store_session(conn_id: int, session_key: bytes, peer_mesh: str):
-    _sessions[conn_id] = {
-        "key":       session_key,
-        "peer_mesh": peer_mesh,
-        "created":   time.time(),
-    }
-    print(f"[+] Session gespeichert: {conn_id} ↔ {peer_mesh}")
-
-def get_session(conn_id: int) -> dict | None:
-    return _sessions.get(conn_id)
-
-def remove_session(conn_id: int):
-    _sessions.pop(conn_id, None)
 
 # ----------------------------
 # Ephemeral Key
@@ -81,10 +59,6 @@ def verify_hello(ed_pub_bytes: bytes, ephemeral_pub: bytes, challenge: bytes, ti
         return False
 
 if __name__ == "__main__":
-    import os
-    
-
-
     pub_bytes, _  = load_public_key()
     own_mesh      = base_address(pub_bytes)
     ed_priv, _    = load_or_create_keys(password)
@@ -95,31 +69,27 @@ if __name__ == "__main__":
 
     a_priv, a_pub = gen_ephemeral()
     b_priv, b_pub = gen_ephemeral()
-    print(f"[*] A ephemeral pub  : {a_pub.hex()[:32]}...")
-    print(f"[*] B ephemeral pub  : {b_pub.hex()[:32]}...")
 
     challenge = gen_challenge()
     ts        = time.time()
 
     sig = sign_hello(ed_priv, a_pub, challenge, ts)
-    print(f"\n[*] Signatur         : {sig.hex()[:32]}...")
-
     valid = verify_hello(pub_bytes, a_pub, challenge, ts, sig)
-    print(f"[✓] Signatur gültig  : {'JA ✔' if valid else 'NEIN ❌'}")
-    print(f"[✓] Timestamp frisch : {check_timestamp(ts)}")
 
     a_session = derive_session_key(a_priv, b_pub)
     b_session = derive_session_key(b_priv, a_pub)
-    print(f"\n[*] A session key    : {a_session.hex()[:32]}...")
-    print(f"[*] B session key    : {b_session.hex()[:32]}...")
-    print(f"[✓] Identisch        : {'JA ✔' if a_session == b_session else 'NEIN ❌'}")
 
     store_session(conn_id, a_session, "peer-mesh-addr")
 
-    from translation import encrypt_fragment, decrypt_fragment
-    msg       = b"Hallo Session Test"
-    encrypted = encrypt_fragment(msg, a_session, conn_id)
-    decrypted = decrypt_fragment(encrypted, b_session, conn_id)
-    print(f"\n[*] Original         : {msg}")
-    print(f"[✓] Decrypted        : {decrypted}")
-    print(f"[✓] Korrekt          : {'JA ✔' if decrypted == msg else 'NEIN ❌'}")
+    loaded_session = get_session(conn_id)
+    if loaded_session:
+        print(f"[✓] Session erfolgreich aus JSON geladen!")
+        session_key_from_json = loaded_session["key"] 
+        
+        from translation import encrypt_fragment, decrypt_fragment
+        msg       = b"Hallo Session Test ueber JSON"
+        encrypted = encrypt_fragment(msg, session_key_from_json, conn_id)
+        decrypted = decrypt_fragment(encrypted, b_session, conn_id)
+        print(f"[✓] Korrekt entschlüsselt: {'JA ✔' if decrypted == msg else 'NEIN ❌'}")
+        
+    clean_expired_addresses()

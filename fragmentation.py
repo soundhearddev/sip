@@ -29,7 +29,7 @@ def fragment_data(
 
         flags = 0x00
         if seq == total - 1:
-            flags = 0x08  # FLAG_LAST_FRAGMENT
+            flags = 0x08  
 
         pkt = build_packet(
             src=src,
@@ -39,7 +39,7 @@ def fragment_data(
             priority=priority,
             conn_id=conn_id,
             seq=seq,
-            ack=0, # erst bei translation wirklich aktiv
+            ack=0, 
             path_id=0,
             cong_hint=0,
             flags=flags,
@@ -116,3 +116,6 @@ if __name__ == "__main__":
     print("-" * 115)
 
     save_packets_to_json(packets, TMP_JSON_PATH)
+
+
+

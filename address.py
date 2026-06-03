@@ -14,24 +14,23 @@ LEBENSDAUER_SEKUNDEN = 60  # TTL in Sekunden (Setze auf None für permanente IPs
 # CORE LOGIC
 # ==============================================================================
 
-def build_address(count: int, prefix: str, before: set[str], iface: str, ttl: int = None):
-    success_count = 0
-    
+def build_address(count: int, prefix: str, before: set[str], iface: str, ttl: int = None) -> list[str]:
+    created = []
     for _ in range(count):
         new_addr = utils.generate_address(prefix)
         while new_addr in before:
             new_addr = utils.generate_address(prefix)
-
         if utils.add_address(iface, new_addr, ttl=ttl):
-            success_count += 1
+            created.append(new_addr)  # ← neu
             before.add(new_addr)
-            
             ttl_info = f" (TTL: {ttl}s)" if ttl else " (Permanent)"
-            print(f"[✓] {success_count}/{count}: {new_addr}{ttl_info}")
-            
+            print(f"[✓] {new_addr}{ttl_info}")
             log_new_address(address=new_addr, iface=iface, ttl=ttl, tag="dev-test")
         else:
             print(f"[✗] Fehler bei {new_addr}")
+    return created  
+
+
 
 # ==============================================================================
 # ADDRESS ENTRY POINT

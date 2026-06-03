@@ -10,7 +10,7 @@ from utils import load_env
 REGISTRY_FILE = "./local_registry.json"
 STATE_FILE    = "./node_state.json"
 SUFFIX        = ".mesh"
-DEFAULT_PORT = 9999
+DEFAULT_PORT = 9998
 
 def _build_local_name() -> str:
     pub_bytes, _ = load_public_key()
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     priv, pub = load_or_create_keys(password)
     pub_bytes = pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
-    master_secret, nonce = load_or_create_state()  # persistent!
+    master_secret, nonce = load_or_create_state() 
 
     std_addr = base_address(pub_bytes)
     hostname = socket.gethostname()

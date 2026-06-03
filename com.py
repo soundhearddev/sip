@@ -1,17 +1,18 @@
+#
+#   deprecated
+#
 import socket
 import sys
 
 HOST = ""  
 PORT = 5005
 
-# Erstellt den IPv6 TCP Socket
-# SO_REUSEADDR sorgt dafür, dass der Port nach einem Neustart sofort wieder frei ist
 server_sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
 server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 try:
     server_sock.bind((HOST, PORT, 0, 0))
-    server_sock.listen(5) # Erlaube eine kleine Warteschlange
+    server_sock.listen(5) 
     print(f"Server läuft auf [{HOST}]:{PORT} und wartet auf Verbindungen...")
 except Exception as e:
     print(f"Fehler beim Starten des Servers: {e}")
@@ -29,24 +30,19 @@ try:
             print(f"Fehler bei Verbindungsannahme: {e}")
             continue
 
-        # 'with' garantiert, dass die Verbindung am Ende IMMER geschlossen wird
         with conn:
             buffer = ""
             while True:
                 try:
-                    # Aufforderung senden (wichtig: mit \n als Trennzeichen!)
                     conn.sendall(b"DEIN ZUG:\n")
 
-                    # Daten empfangen
                     data = conn.recv(4096)
                     if not data:
                         print("[-] Client hat die Verbindung sauber geschlossen.")
                         break
 
-                    # Nachricht decodieren (Fehler abfangen, falls Müll geschickt wird)
                     buffer += data.decode('utf-8', errors='ignore')
                     
-                    # Verarbeite Zeile für Zeile (TCP-Streaming-Schutz)
                     while "\n" in buffer:
                         msg, buffer = buffer.split("\n", 1)
                         msg = msg.strip()
@@ -58,7 +54,6 @@ try:
                             print("[-] STOP-Signal erhalten. Schließe Verbindung.")
                             break
 
-                        # Server-Antwort eingeben
                         try:
                             reply = input("Server > ").strip()
                         except (KeyboardInterrupt, EOFError):

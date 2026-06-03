@@ -22,7 +22,7 @@ def get_network_info():
         }
         
 
-    # IPv6 routes
+
     result = subprocess.run(["ip", "-6", "route"], capture_output=True, text=True)
     
     for line in result.stdout.splitlines():

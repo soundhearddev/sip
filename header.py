@@ -26,25 +26,29 @@ FLAG_FORWARD_SECRECY = 0x02
 FLAG_MIGRATION       = 0x04
 FLAG_LAST_FRAGMENT   = 0x08
 
-# ----------------------------
-# Header Layout (64 Bytes)
+# ------------------------------------------------------------------------------------------------------
+# ZENTRALES HEADER LAYOUT (64 Bytes Gesamtgröße)
 #
-# Offset  Size  Field
-# 0       4     Magic
-# 4       1     Version
-# 5       1     PacketType
-# 6       1     Priority
-# 7       1     Flags
-# 8       16    Source mesh-addr
-# 24      16    Destination mesh-addr
-# 40      8     Connection ID
-# 48      2     Sequence Number 
-# 50      2     ACK Number       
-# 52      2     Payload Length   
-# 54      1     Path ID          
-# 55      1     Congestion Hint  
-# + 8     Timestamp (unix)  → total 64 Bytes
-# ----------------------------
+# Byte-Offset  Hex-Offset  Größe (Bytes)  struct-Typ  Feldname              Beschreibung
+# ------------------------------------------------------------------------------------------------------
+# 0            0x00        4              I           Magic                 Protokoll-Kennung
+# 4            0x04        1              B           Version               Protokoll-Version
+# 5            0x05        1              B           PacketType            bestimmt die Funktion des Pakets
+# 6            0x06        1              B           Priority              REALTIME(0x00) bis BULK(0x03)
+# 7            0x07        1              B           Flags                 Krypto- und Fragmentierungs-Bitmaske
+# 8            0x08        16             16s         Source mesh-addr      128-Bit Quell-Knotenadresse 
+# 24           0x18        16             16s         Destination mesh-addr 128-Bit Ziel-Knotenadresse
+# 40           0x28        8              Q           Connection ID         64-Bit Eindeutige Session-ID
+# 48           0x30        2              H           Sequence Number       Fragment-Index
+# 50           0x32        2              H           ACK Number            Bestätigungsnummer für ARQ-Protokoll
+# 52           0x34        2              H           Payload Length        Länge der reinen Nutzdaten in Bytes
+# 54           0x36        1              B           Path ID               Gewählter Multipath-Pfad
+# 55           0x37        1              B           Congestion Hint       Netzwerk-Überlastungs-Indikator
+# 56           0x38        8              Q           Timestamp             Sendezeitpunkt
+# ------------------------------------------------------------------------------------------------------
+# Gesamter Header-Formatstring für struct: "!IBBBB16s16sQHHHBBQ" (Das '!' erzwingt Netzwerk-Byte-Order / Big-Endian)
+# ------------------------------------------------------------------------------------------------------
+
 HEADER_FORMAT = "!IBBBB16s16sQHHHBBQ" 
 HEADER_SIZE   = struct.calcsize(HEADER_FORMAT)
 AUTH_TAG_SIZE = 16
