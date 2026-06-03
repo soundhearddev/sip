@@ -127,9 +127,7 @@ def build_packet(src_mesh: str, dst_mesh: str, payload: bytes) -> bytes:
         payload
     )
     
-def parse_packet(data: bytes) -> dict | None:
-    MAGIC         = b"MESH"
-    
+def parse_packet(data: bytes) -> dict | None:    
     if len(data) < 36 or data[:4] != MAGIC:
         return None
     src     = data[4:20].hex()
