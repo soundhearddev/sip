@@ -6,6 +6,11 @@ import secrets
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from utils import load_env
+
+load_env()
+password = os.environ.get("MESH_PASSWORD", "").encode()
+
 
 KEY_DIR = "./keys"
 PRIVATE_FILE = os.path.join(KEY_DIR, "private.key")
@@ -167,17 +172,13 @@ def gen_id(pub_bytes: bytes, length: int = 32) -> str:
     return digest[:length]
 
 
-# ----------------------------
-# Beispiel-Nutzung
-# FIX: os.urandom(32) statt gethostname() als Master-Secret
-# ----------------------------
 if __name__ == "__main__":
-    # In der Praxis: aus sicherem Speicher laden, nicht neu generieren
-    master_secret = secrets.token_bytes(32)   # KEIN Hostname, KEIN random()
-    nonce = secrets.token_bytes(16)           # secrets statt os.urandom (beide gut, secrets expliziter)
+    
+    master_secret = secrets.token_bytes(32)   
+    nonce = secrets.token_bytes(16)           
 
-    # Beispiel: Public Key als Basis-Adresse
-    password = b"sicheres-passwort-aus-env-oder-vault"  # aus os.environ holen!
+
+    
     priv, pub = load_or_create_keys(password)
     pub_bytes = pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 

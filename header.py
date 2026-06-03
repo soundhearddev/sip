@@ -45,7 +45,7 @@ FLAG_LAST_FRAGMENT   = 0x08
 # 55      1     Congestion Hint  
 # + 8     Timestamp (unix)  → total 64 Bytes
 # ----------------------------
-HEADER_FORMAT = "!IBBBB16s16sQHHHBBQ"  # 'H' für Seq und ACK
+HEADER_FORMAT = "!IBBBB16s16sQHHHBBQ" 
 HEADER_SIZE   = struct.calcsize(HEADER_FORMAT)
 AUTH_TAG_SIZE = 16
 

@@ -135,3 +135,15 @@ def parse_packet(data: bytes) -> dict | None:
     length  = int.from_bytes(data[36:38], "big")
     payload = data[38:38 + length]
     return {"src": src, "dst": dst, "payload": payload}
+
+
+def load_env(path=".env"):
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip()
+    except FileNotFoundError:
+        pass

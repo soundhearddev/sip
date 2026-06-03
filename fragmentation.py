@@ -7,7 +7,7 @@ from netIP import load_public_key
 from utils import gen_conn_id
 
 CHUNK_SIZE = 1200  
-TMP_JSON_PATH = "packet_dump.json"
+TMP_JSON_PATH = "./dump/packet_dump.json"
 
 def fragment_data(
     data: bytes,
@@ -75,7 +75,7 @@ def save_packets_to_json(packets: list, filename: str):
 if __name__ == "__main__":
     src = "fbfe3f0f1530d41a60a81c6d84a6e4d9"
     dst = "a3f9b2c8d4e1f5a6b7c8d9e0f1a2b3c4"
-    filename = "linux.svg"
+    filename = "dump/linux.svg"
 
     if not os.path.exists(filename):
         print(f"[*] '{filename}' nicht gefunden. Erstelle temporäre Dummy-Datei...")

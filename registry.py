@@ -5,6 +5,7 @@ from netIP import load_or_create_keys, base_address, load_public_key
 from cryptography.hazmat.primitives import serialization
 import secrets
 import os
+from utils import load_env
 
 REGISTRY_FILE = "./local_registry.json"
 STATE_FILE    = "./node_state.json"
@@ -47,7 +48,9 @@ def resolve(name: str) -> str | None:
     return (load_registry().get(name) or {}).get("address")
 
 if __name__ == "__main__":
-    password = b"sicheres-passwort-aus-env-oder-vault"
+    load_env()
+    password = os.environ.get("MESH_PASSWORD", "").encode()
+    
     priv, pub = load_or_create_keys(password)
     pub_bytes = pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
