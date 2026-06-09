@@ -36,8 +36,6 @@ pub fn main() !void {
     t2.join();
 }
 
-// ───────────────────────── BOOTSTRAP SERVER ─────────────────────────
-
 fn listenBootstrap(_: std.mem.Allocator, store: *TrustStore) !void {
     const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, posix.IPPROTO.TCP);
     defer posix.close(fd);
@@ -83,8 +81,6 @@ fn handleBootstrap(store: *TrustStore, conn: Connection) void {
     store.addPeer(key);
     _ = posix.write(conn.handle, "UPGRADE") catch return;
 }
-
-// ───────────────────────── DATA SERVER ─────────────────────────
 
 fn listenData(_: std.mem.Allocator, store: *TrustStore) !void {
     const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, posix.IPPROTO.TCP);

@@ -74,7 +74,6 @@ fn createKeys(io: std.Io, password: []const u8) !KeyPair {
         try w.flush();
     }
     {
-        // FIX: createFile statt openFile — public key schreiben nicht lesen
         const f = try cwd.createFile(io, PUBLIC_FILE, .{});
         defer f.close(io);
         const rc = std.os.linux.syscall2(.fchmod, @intCast(f.handle), 0o644);

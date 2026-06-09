@@ -2,14 +2,9 @@ const std = @import("std");
 const crypto = std.crypto;
 const Ed25519 = crypto.sign.Ed25519;
 
-// ----------------------------
-// Typen
-// ----------------------------
-
 pub const MAX_NAME_LEN: usize = 64;
-pub const INVITE_TOKEN_LEN: usize = Ed25519.Signature.encoded_length; // 64 Bytes
+pub const INVITE_TOKEN_LEN: usize = Ed25519.Signature.encoded_length;
 
-// Infos die ein Peer beim Connect vorlegt
 pub const PeerInfo = struct {
     ed_pub: [32]u8,
     mesh_addr: [32]u8,
@@ -22,22 +17,17 @@ pub const PeerInfo = struct {
     }
 };
 
-// Invite Token: signiert vom einladenden Peer
-// Inhalt der Signatur: invited_ed_pub (32B)
-// Wer hat eingeladen: inviter_ed_pub
 pub const InviteToken = struct {
     inviter_ed_pub: [32]u8,
     signature: [INVITE_TOKEN_LEN]u8,
 };
 
-// Eintrag im TrustStore
 pub const TrustedPeer = struct {
     ed_pub: [32]u8,
     mesh_addr: [32]u8,
     name: [MAX_NAME_LEN]u8,
     name_len: usize,
 
-    // Wer hat diesen Peer eingeladen (null = manuell zugelassen)
     invited_by: ?[32]u8,
 
     pub fn nameSlice(self: *const TrustedPeer) []const u8 {
@@ -45,16 +35,11 @@ pub const TrustedPeer = struct {
     }
 };
 
-// Vertrauenskette für Anzeige (max 4 Hops)
 const TrustChain = struct {
     hops: [4]?[32]u8 = [_]?[32]u8{null} ** 4,
     len: usize = 0,
 };
 
-// ----------------------------
-// TrustStore
-// Shared zwischen Threads → Mutex geschützt
-// ----------------------------
 pub const TrustStore = struct {
     peers: std.ArrayList(TrustedPeer),
     allocator: std.mem.Allocator,
@@ -73,7 +58,6 @@ pub const TrustStore = struct {
         self.peers.deinit(self.allocator);
     }
 
-    // Ist dieser Public Key bekannt und vertrauenswürdig?
     pub fn isKnown(self: *TrustStore, ed_pub: [32]u8) !bool {
         try self.mutex.lock(self.io);
         defer self.mutex.unlock(self.io);
@@ -84,7 +68,6 @@ pub const TrustStore = struct {
         return false;
     }
 
-    // Peer nachschlagen
     pub fn get(self: *TrustStore, ed_pub: [32]u8) !?TrustedPeer {
         try self.mutex.lock(self.io);
         defer self.mutex.unlock(self.io);
@@ -95,7 +78,6 @@ pub const TrustStore = struct {
         return null;
     }
 
-    // Peer hinzufügen (nach User-Bestätigung)
     pub fn add(self: *TrustStore, peer: TrustedPeer) !void {
         try self.mutex.lock(self.io);
         defer self.mutex.unlock(self.io);
@@ -103,12 +85,10 @@ pub const TrustStore = struct {
         try self.peers.append(self.allocator, peer);
     }
 
-    // Vertrauenskette aufbauen für Anzeige
     fn buildChain(self: *TrustStore, ed_pub: [32]u8) TrustChain {
         var chain = TrustChain{};
         var current = ed_pub;
 
-        // Kette zurückverfolgen (max 4 Hops)
         var i: usize = 0;
         while (i < 4) : (i += 1) {
             var found = false;
@@ -129,10 +109,6 @@ pub const TrustStore = struct {
     }
 };
 
-// ----------------------------
-// Invite Token generieren
-// Signatur über: invited_ed_pub
-// ----------------------------
 pub fn generateInvite(
     inviter_keypair: Ed25519.KeyPair,
     invited_ed_pub: [32]u8,
@@ -144,9 +120,6 @@ pub fn generateInvite(
     };
 }
 
-// ----------------------------
-// Invite Token verifizieren
-// ----------------------------
 pub fn verifyInvite(
     token: InviteToken,
     invited_ed_pub: [32]u8,
@@ -157,9 +130,6 @@ pub fn verifyInvite(
     return true;
 }
 
-// ----------------------------
-// Vertrauenskette als lesbaren String bauen
-// ----------------------------
 fn formatChain(
     store: *TrustStore,
     chain: TrustChain,
@@ -193,13 +163,7 @@ fn formatChain(
     }
     return @as([]const u8, buf[0..pos]);
 }
-// ----------------------------
-// User Prompt: Peer annehmen oder ablehnen
-//
-// Zeigt alle Infos + Invite-Kontext an.
-// Wartet auf "j" oder "n" vom User.
-// Gibt true zurück wenn angenommen.
-// ----------------------------
+
 pub fn requestApproval(
     io: std.Io,
     store: *TrustStore,
@@ -214,20 +178,15 @@ pub fn requestApproval(
     try out.writeAll("║     NEUER PEER MÖCHTE SICH VERBINDEN         ║\n");
     try out.writeAll("╚══════════════════════════════════════════════╝\n");
 
-    // Name
     try out.print("  Name      : {s}\n", .{info.nameSlice()});
 
-    // Mesh-Adresse
     try out.print("  Mesh-Addr : {x}\n", .{info.mesh_addr});
 
-    // Public Key (erste 16 Bytes anzeigen)
     try out.print("  Public Key: {x}...\n", .{info.ed_pub[0..16]});
 
-    // Invite-Kontext
     if (info.invite_token) |token| {
         if (verifyInvite(token, info.ed_pub)) {
             if (try store.get(token.inviter_ed_pub)) |inviter| {
-                // Vertrauenskette aufbauen
                 try store.mutex.lock(store.io);
                 const chain = store.buildChain(token.inviter_ed_pub);
                 store.mutex.unlock(store.io);
@@ -240,11 +199,9 @@ pub fn requestApproval(
                     try out.print("  Kette     : {s}\n", .{chain_str});
                 }
             } else {
-                // Invite-Token gültig aber Einlader nicht bekannt
                 try out.print("  Eingeladen von: unbekanntem Peer ({x}...)\n", .{token.inviter_ed_pub[0..8]});
             }
         } else {
-            // Ungültiger Token — warnen
             try out.writeAll("  [!] Invite-Token UNGÜLTIG — Vorsicht!\n");
         }
     } else {
@@ -255,12 +212,10 @@ pub fn requestApproval(
     try out.writeAll("  Annehmen? [j/n]: ");
     try w.flush();
 
-    // User Input lesen
     const stdin = std.Io.File.stdin();
     var in_buf: [4]u8 = undefined;
     var reader = stdin.reader(io, &in_buf);
 
-    // Auf erste nicht-whitespace Eingabe warten
     while (true) {
         const line = try reader.interface.takeDelimiter('\n');
         if (line == null) return false;
@@ -281,25 +236,16 @@ pub fn requestApproval(
     }
 }
 
-// ----------------------------
-// Eingehenden Peer verarbeiten:
-// 1. Bekannt? → direkt true
-// 2. Unbekannt → User fragen
-// 3. Wenn ja → in TrustStore aufnehmen
-// ----------------------------
 pub fn evaluate(
     io: std.Io,
     store: *TrustStore,
     info: PeerInfo,
 ) !bool {
-    // Bereits bekannt → direkt durchlassen
     if (try store.isKnown(info.ed_pub)) return true;
 
-    // User fragen
     const approved = try requestApproval(io, store, info);
     if (!approved) return false;
 
-    // Invite-Einlader bestimmen
     var invited_by: ?[32]u8 = null;
     if (info.invite_token) |token| {
         if (verifyInvite(token, info.ed_pub)) {
@@ -309,7 +255,6 @@ pub fn evaluate(
         }
     }
 
-    // In TrustStore aufnehmen
     const trusted = TrustedPeer{
         .ed_pub = info.ed_pub,
         .mesh_addr = info.mesh_addr,
@@ -322,9 +267,6 @@ pub fn evaluate(
     return true;
 }
 
-// ----------------------------
-// Demo
-// ----------------------------
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     var gpa = std.heap.DebugAllocator(.{}).init;
@@ -334,7 +276,6 @@ pub fn main(init: std.process.Init) !void {
     var store = TrustStore.init(io, allocator);
     defer store.deinit();
 
-    // Simuliere eingehenden Peer
     const peer_kp = Ed25519.KeyPair.generate(io);
     var name_buf = [_]u8{0} ** MAX_NAME_LEN;
     const name = "laptop-a3f9.mesh";

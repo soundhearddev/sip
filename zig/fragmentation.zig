@@ -3,7 +3,6 @@ const header = @import("header.zig");
 
 pub const CHUNK_SIZE: usize = 1200;
 
-// Flag für letztes Fragment
 pub const FLAG_LAST: u8 = 0x08;
 
 pub const Fragment = struct {
@@ -27,10 +26,6 @@ pub const FragmentList = struct {
     }
 };
 
-// ----------------------------
-// Daten in SIP-Fragmente aufteilen
-// Gibt eine Liste von fertigen Paketen zurück (Header + Payload)
-// ----------------------------
 pub fn fragmentData(
     allocator: std.mem.Allocator,
     data: []const u8,
@@ -51,7 +46,6 @@ pub fn fragmentData(
         const is_last = (seq == total_chunks - 1);
         const flags: u8 = if (is_last) FLAG_LAST else 0x00;
 
-        // Puffer für Header + Chunk
         const buf = try allocator.alloc(u8, header.HEADER_SIZE + chunk.len);
         errdefer allocator.free(buf);
 
@@ -64,11 +58,6 @@ pub fn fragmentData(
             chunk,
         );
 
-        // flags & seq manuell in den Header schreiben
-        // Im header.zig Layout: flags liegen nicht explizit drin — wir nutzen
-        // die letzten freien Bytes des Payloads NICHT, stattdessen bauen wir
-        // seq und flags direkt in conn_id-Bereich (Upper 32 Bit von conn_id)
-        // Encoding: conn_id = base_conn_id | (seq << 32) | (flags << 56)
         const encoded_conn_id: u64 =
             (conn_id & 0x00000000FFFFFFFF) |
             (@as(u64, @intCast(seq)) << 32) |
@@ -76,7 +65,7 @@ pub fn fragmentData(
 
         std.mem.writeInt(u64, buf[34..42], encoded_conn_id, .little);
 
-        _ = pkt; // pkt zeigt auf buf, buf wird in Fragment gespeichert
+        _ = pkt;
 
         fragments[seq] = Fragment{
             .data = buf,
@@ -90,9 +79,6 @@ pub fn fragmentData(
     };
 }
 
-// ----------------------------
-// conn_id dekodieren → base id, seq, flags
-// ----------------------------
 pub const DecodedConnId = struct {
     base_id: u32,
     seq: u32,

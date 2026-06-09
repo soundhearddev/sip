@@ -70,9 +70,6 @@ fn readHeader(buf: []const u8) Header {
     return h;
 }
 
-// ----------------------------
-// Packet bauen
-// ----------------------------
 pub fn buildPacket(
     buf: []u8,
     src: [16]u8,
@@ -101,9 +98,6 @@ pub fn buildPacket(
     return buf[0 .. HEADER_SIZE + payload.len];
 }
 
-// ----------------------------
-// Packet parsen
-// ----------------------------
 pub fn parsePacket(data: []const u8) !ParsedPacket {
     if (data.len < HEADER_SIZE) return error.PacketTooSmall;
 
@@ -120,9 +114,6 @@ pub fn parsePacket(data: []const u8) !ParsedPacket {
     };
 }
 
-// ----------------------------
-// Demo
-// ----------------------------
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = std.heap.page_allocator;
@@ -135,8 +126,8 @@ pub fn main(init: std.process.Init) !void {
     const bytes = try allocator.alloc(u8, file_size);
     defer allocator.free(bytes);
 
-    var fr = file.reader(io, bytes); // bytes = interner Buffer
-    try fr.interface.fill(file_size); // alles in einem Lesevorgang
+    var fr = file.reader(io, bytes);
+    try fr.interface.fill(file_size);
 
     const src = [_]u8{0x0b} ++ [_]u8{0x82} ++ [_]u8{0} ** 14;
     const dst = [_]u8{0xa3} ++ [_]u8{0xf9} ++ [_]u8{0} ** 14;
