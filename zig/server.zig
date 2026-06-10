@@ -277,14 +277,13 @@ fn handleBootstrapInner(ctx: ConnCtx) !void {
     const own_name = "sip-node.mesh";
 
     try writer.interface.writeAll("OK\n");
+    try writer.interface.flush();
+
     try writer.interface.writeAll(&own_pub);
     try writer.interface.writeAll(&own_mesh);
     try writer.interface.writeByte(@intCast(own_name.len));
     try writer.interface.writeAll(own_name);
-    std.debug.print("[Bootstrap] Sende name_len={d} name={s}\n", .{ own_name.len, own_name });
     try writer.interface.flush();
-
-    std.debug.print("[Bootstrap] Peer akzeptiert: {s}\n", .{info.nameSlice()});
 }
 
 // ----------------------------
