@@ -268,7 +268,8 @@ fn handleBootstrapInner(ctx: ConnCtx) !void {
 
     if (!approved) {
         std.debug.print("[Bootstrap] Abgelehnt\n", .{});
-        try writer.interface.writeAll("DENY\n");
+        try writer.interface.writeAll("DENY");
+        try writer.interface.flush();
         return;
     }
 
@@ -276,14 +277,18 @@ fn handleBootstrapInner(ctx: ConnCtx) !void {
     const own_mesh = session.peerMeshAddr(own_pub);
     const own_name = "sip-node.mesh";
 
-    try writer.interface.writeAll("OK\n");
-    try writer.interface.flush();
-
+    try writer.interface.writeAll("OK  ");
     try writer.interface.writeAll(&own_pub);
     try writer.interface.writeAll(&own_mesh);
     try writer.interface.writeByte(@intCast(own_name.len));
     try writer.interface.writeAll(own_name);
+
+    std.debug.print("[Bootstrap] Sende name_len={d} name={s}\n", .{ own_name.len, own_name });
     try writer.interface.flush();
+
+    _ = reader.interface.take(1) catch {};
+
+    std.debug.print("[Bootstrap] Peer akzeptiert: {s}\n", .{info.nameSlice()});
 }
 
 // ----------------------------

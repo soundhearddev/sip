@@ -70,11 +70,11 @@ pub fn main(init: std.process.Init) !void {
     try writer.interface.flush();
     std.debug.print("[Bootstrap] Signatur gesendet\n", .{}); // ← add
 
-    const status = try reader.interface.takeDelimiterExclusive('\n');
+    const status = try reader.interface.take(4);
     std.debug.print("[Bootstrap] Status bytes: {d}\n", .{status.len});
     std.debug.print("[Bootstrap] Server Status: '{s}'\n", .{status});
 
-    if (!std.mem.eql(u8, status, "OK")) {
+    if (!std.mem.eql(u8, status, "OK  ")) {
         std.debug.print("[Bootstrap] Abgelehnt\n", .{});
         return;
     }
@@ -97,6 +97,9 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("[Bootstrap] Server ed_pub    : {x}...\n", .{srv_pub[0..8]});
     std.debug.print("[Bootstrap] Server mesh_addr : {x}...\n", .{srv_mesh[0..8]});
     std.debug.print("[Bootstrap] Server name      : {s}\n", .{srv_name[0..srv_name_len]});
+
+    try writer.interface.writeByte(1);
+    try writer.interface.flush();
 
     std.debug.print("\n[✓] Bootstrap abgeschlossen\n", .{});
 }
