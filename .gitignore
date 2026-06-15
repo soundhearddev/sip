@@ -4,3 +4,5 @@ keys
 local_registry.json
 node_state.json
 .env
+.zig-cache/
+zig-out/
