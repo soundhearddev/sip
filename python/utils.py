@@ -6,7 +6,7 @@ import re
 from socket import gethostname
 import hashlib
 import time
-from header import MAGIC
+from python.header import MAGIC
 import struct
 
 

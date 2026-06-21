@@ -1,11 +1,11 @@
 import json
 import socket
 from pathlib import Path
-from netIP import load_or_create_keys, base_address, load_public_key
+from python.netIP import load_or_create_keys, base_address, load_public_key
 from cryptography.hazmat.primitives import serialization
 import secrets
 import os
-from utils import load_env
+from python.utils import load_env
 
 REGISTRY_FILE = "./local_registry.json"
 STATE_FILE    = "./node_state.json"

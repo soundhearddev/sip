@@ -3,8 +3,8 @@ import os
 import secrets
 import struct
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-from fragmentation import fragment_data, parse_packet as frag_parse_packet
-from header import build_packet, parse_packet as header_parse_packet, PacketType, Priority, HEADER_SIZE
+from python.fragmentation import fragment_data, parse_packet as frag_parse_packet
+from python.header import build_packet, parse_packet as header_parse_packet, PacketType, Priority, HEADER_SIZE
 
 _buffer: dict[int, dict] = {}
 

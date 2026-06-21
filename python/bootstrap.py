@@ -1,7 +1,7 @@
 import json
 import socket
-from netIP import load_public_key, base_address
-from registry import SUFFIX, DEFAULT_PORT, LOCAL_NAME
+from python.netIP import load_public_key, base_address
+from python.registry import SUFFIX, DEFAULT_PORT, LOCAL_NAME
 
 HANDSHAKE_PORT = 9998
 

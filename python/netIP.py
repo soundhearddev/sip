@@ -6,7 +6,7 @@ import secrets
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from utils import load_env
+from python.utils import load_env
 
 load_env()
 password = os.environ.get("MESH_PASSWORD", "").encode()

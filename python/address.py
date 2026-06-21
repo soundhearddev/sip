@@ -1,5 +1,5 @@
 import sys
-from storage import log_new_address
+from python.storage import log_new_address
 
 import utils
 

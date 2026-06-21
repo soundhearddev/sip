@@ -1,11 +1,11 @@
 import socket
 import json
-from netIP import load_public_key, base_address
-from registry import load_registry, LOCAL_NAME
-from utils import load_env
+from python.netIP import load_public_key, base_address
+from python.registry import load_registry, LOCAL_NAME
+from python.utils import load_env
 
-from storage import load_storage, get_session
-from translation import translate_outbound
+from python.storage import load_storage, get_session
+from python.translation import translate_outbound
 
 load_env()
 

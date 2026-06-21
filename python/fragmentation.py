@@ -1,10 +1,10 @@
 import os
 import json
 import time
-from header import build_packet, parse_packet, PacketType, Priority
+from python.header import build_packet, parse_packet, PacketType, Priority
 
-from netIP import load_public_key
-from utils import gen_conn_id
+from python.netIP import load_public_key
+from python.utils import gen_conn_id
 
 CHUNK_SIZE = 1200  
 TMP_JSON_PATH = "./dump/packet_dump.json"

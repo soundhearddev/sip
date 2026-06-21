@@ -1,6 +1,6 @@
 import sys
 import socket
-from registry import load_registry, SUFFIX
+from python.registry import load_registry, SUFFIX
 
 
 

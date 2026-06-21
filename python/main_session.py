@@ -1,12 +1,12 @@
 import os
 import secrets
 import socket
-from utils import load_env
-from registry import load_registry, LOCAL_NAME
-from resolve import resolve
-from netIP import load_or_create_keys, load_public_key, base_address
+from python.utils import load_env
+from python.registry import load_registry, LOCAL_NAME
+from python.resolve import resolve
+from python.netIP import load_or_create_keys, load_public_key, base_address
 
-from session import (
+from python.session import (
     gen_ephemeral, derive_session_key,
     gen_challenge, check_timestamp,
     sign_hello, verify_hello,

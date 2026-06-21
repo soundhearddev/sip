@@ -3,10 +3,10 @@ import os
 import socket
 import threading
 import time
-from utils import load_env
+from python.utils import load_env
 
-from storage import get_session, store_session
-from translation import peek_conn_id, receive
+from python.storage import get_session, store_session
+from python.translation import peek_conn_id, receive
 
 load_env()
 

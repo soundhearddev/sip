@@ -4,10 +4,10 @@ import time
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
-from netIP import load_public_key, base_address, load_or_create_keys
-from utils import load_env
+from python.netIP import load_public_key, base_address, load_or_create_keys
+from python.utils import load_env
 import os
-from storage import store_session, get_session, remove_session, clean_expired_addresses
+from python.storage import store_session, get_session, remove_session, clean_expired_addresses
 
 load_env()
 password = os.environ.get("MESH_PASSWORD", "").encode()
