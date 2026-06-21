@@ -13,20 +13,30 @@ pub const PacketType = enum(u8) {
     migration = 0x06,
 };
 
-pub const HEADER_SIZE: usize = 48;
+pub const HEADER_SIZE: usize = 50;
 
 // ----------------------------
-// Header Layout (48 Bytes)
+// Header Layout (50 Bytes)
 //
 // Offset  Size  Field
 // 0       1     Magic
 // 1       1     PacketType
 // 2       16    src mesh-addr
 // 18      16    dst mesh-addr
-// 34      8     Connection ID
+// 34      8     Connection ID (base_id | seq | flags, siehe fragmentation.zig)
 // 42      2     Payload Length
 // 44      4     Timestamp
+// 48      2     Total Fragment Count
 // ----------------------------
+//
+// HINWEIS (translation.zig-Umbau): total_fragments wurde hinzugefuegt, damit
+// der Empfaenger schon beim ERSTEN ankommenden Fragment weiss, wie viele
+// Fragmente insgesamt zu einer Nachricht gehoeren - unabhaengig davon, ob
+// das Fragment mit FLAG_LAST zuerst, zuletzt oder gar nicht ankommt. Vorher
+// wurde "total" nur aus (seq + 1) BEIM letzten Fragment abgeleitet, was
+// bedeutet: geht das letzte Fragment verloren oder kommt verspaetet an,
+// kennt der Empfaenger "total" nicht und kann keinen Groessen-Cap pruefen,
+// bevor er beginnt, Fragmente im Speicher zu sammeln.
 pub const Header = struct {
     magic: u8,
     packet_type: u8,
@@ -35,6 +45,7 @@ pub const Header = struct {
     conn_id: u64,
     payload_len: u16,
     timestamp: u32,
+    total_fragments: u16,
 };
 
 pub const ParsedPacket = struct {
@@ -52,6 +63,7 @@ fn writeHeader(buf: []u8, h: Header) void {
     std.mem.writeInt(u64, buf[34..42], h.conn_id, .little);
     std.mem.writeInt(u16, buf[42..44], h.payload_len, .little);
     std.mem.writeInt(u32, buf[44..48], h.timestamp, .little);
+    std.mem.writeInt(u16, buf[48..50], h.total_fragments, .little);
 }
 
 fn readHeader(buf: []const u8) Header {
@@ -66,6 +78,7 @@ fn readHeader(buf: []const u8) Header {
     h.conn_id = std.mem.readInt(u64, buf[34..42], .little);
     h.payload_len = std.mem.readInt(u16, buf[42..44], .little);
     h.timestamp = std.mem.readInt(u32, buf[44..48], .little);
+    h.total_fragments = std.mem.readInt(u16, buf[48..50], .little);
 
     return h;
 }
@@ -77,6 +90,7 @@ pub fn buildPacket(
     conn_id: u64,
     ptype: PacketType,
     payload: []const u8,
+    total_fragments: u16,
 ) ![]u8 {
     if (buf.len < HEADER_SIZE + payload.len) return error.BufferTooSmall;
 
@@ -90,6 +104,7 @@ pub fn buildPacket(
         .conn_id = conn_id,
         .payload_len = @intCast(payload.len),
         .timestamp = ts,
+        .total_fragments = total_fragments,
     };
 
     writeHeader(buf[0..HEADER_SIZE], header);
@@ -136,7 +151,7 @@ pub fn main(init: std.process.Init) !void {
     const buf = try allocator.alloc(u8, total);
     defer allocator.free(buf);
 
-    const pkt = try buildPacket(buf, src, dst, 12345678, .data, bytes);
+    const pkt = try buildPacket(buf, src, dst, 12345678, .data, bytes, 1);
 
     std.debug.print("HEADER HEX:\n", .{});
     for (pkt[0..HEADER_SIZE], 0..) |b, i| {

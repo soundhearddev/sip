@@ -37,7 +37,7 @@ def build_address(count: int, prefix: str, before: set[str], iface: str, ttl: in
 # ==============================================================================
 
 if __name__ == "__main__":
-    utils.isroot()
+    utils.isroot()   
 
     if DEBUG:
         print("[MODUS] DEBUG-Modus aktiv. Nutze Dummy-Interface.")
