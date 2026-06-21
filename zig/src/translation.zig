@@ -6,16 +6,6 @@ pub const KEY_SIZE: usize = 32;
 pub const NONCE_SIZE: usize = 12;
 pub const TAG_SIZE: usize = 16;
 
-// Defensiver Cap fuer die Reassembly: kein Cleanup-Mechanismus (das ist
-// Aufgabe des Servers, siehe Design-Rundown), sondern eine harte Grenze,
-// damit ein einzelner base_id niemals mehr als diese Anzahl Fragmente im
-// Speicher anhaeufen kann - unabhaengig davon, ob die Uebertragung jemals
-// abgeschlossen wird. Wird VOR jeder Allokation geprueft, sobald total
-// bekannt ist (siehe ReassemblyBuffer.insert).
-//
-// 4096 Fragmente * CHUNK_SIZE (1200 Byte, siehe fragmentation.zig) ~= 4.9 MB
-// pro Nachricht. Anpassen, falls grosse Nachrichten legitim erwartet werden -
-// total_fragments im Header ist ein u16, das technische Maximum waere 65535.
 pub const MAX_FRAGMENTS_PER_MESSAGE: u32 = 4096;
 
 pub fn encryptFragment(
@@ -95,10 +85,6 @@ pub const ReassemblyBuffer = struct {
 
     pub const FragmentStore = struct {
         fragments: std.AutoHashMap(u32, []u8),
-        // total wird beim allerersten Fragment fuer diesen base_id gesetzt
-        // und danach nicht mehr veraendert. Kommt ein spaeteres Fragment mit
-        // widersprechendem total an, ist das ein klares Manipulations-/
-        // Inkonsistenzsignal -> insert() verwirft es (siehe unten).
         total: u32,
         allocator: std.mem.Allocator,
 
@@ -134,24 +120,6 @@ pub const ReassemblyBuffer = struct {
         self.map.deinit();
     }
 
-    /// Fuegt ein Fragment in die Reassembly ein.
-    ///
-    /// `total` kommt jetzt explizit aus dem Header (parsed.header.total_fragments),
-    /// nicht mehr abgeleitet aus (seq + 1) beim letzten Fragment. Das macht
-    /// Vollstaendigkeit unabhaengig von der Ankunftsreihenfolge der Fragmente
-    /// pruefbar UND erlaubt den Cap-Check unten, bevor irgendetwas fuer einen
-    /// neuen base_id alloziert wird.
-    ///
-    /// Gibt zurueck:
-    ///   - null, wenn die Nachricht noch nicht vollstaendig ist
-    ///   - die zusammengesetzten Originaldaten, wenn alle Fragmente da sind
-    ///
-    /// Fehlerfaelle (Paket wird verworfen statt zu crashen):
-    ///   - error.TooManyFragments: total > MAX_FRAGMENTS_PER_MESSAGE
-    ///   - error.InconsistentTotal: total widerspricht einem bereits
-    ///     bekannten total fuer denselben base_id
-    ///   - error.InvalidSeq: seq >= total (kann nicht zu dieser Nachricht
-    ///     gehoeren)
     pub fn insert(
         self: *ReassemblyBuffer,
         base_id: u32,
@@ -170,17 +138,12 @@ pub const ReassemblyBuffer = struct {
         const store = result.value_ptr;
 
         if (store.total != total) {
-            // Widerspruechliches total fuer einen laufenden base_id - entweder
-            // Bitfehler/Manipulation oder ein base_id-Wiederverwendungsfehler
-            // beim Aufrufer. Wird nicht stillschweigend uebernommen.
             return error.InconsistentTotal;
         }
 
         const owned = try self.allocator.dupe(u8, payload);
         errdefer self.allocator.free(owned);
 
-        // Falls fuer diese seq bereits ein Fragment vorliegt (Duplikat/Retransmit),
-        // wird das alte freigegeben, statt es stillschweigend zu leaken.
         if (store.fragments.fetchRemove(seq)) |old| {
             self.allocator.free(old.value);
         }
@@ -188,8 +151,6 @@ pub const ReassemblyBuffer = struct {
 
         if (store.fragments.count() < store.total) return null;
 
-        // Alle `total` Fragmente sind da (0..total-1, da seq < total oben
-        // bereits erzwungen und die Map keine Duplikate haelt).
         var total_len: usize = 0;
         var i: u32 = 0;
         while (i < store.total) : (i += 1) {
@@ -207,10 +168,6 @@ pub const ReassemblyBuffer = struct {
             offset += piece.len;
         }
 
-        // Erst nach erfolgreichem Zusammenbau aufraeumen, damit bei einem
-        // Fehler oben (z.B. OOM beim assembled-alloc) der Store inklusive
-        // aller Fragmente fuer einen erneuten Versuch erhalten bleibt,
-        // statt halb aufgeraeumt und halb nicht.
         store.deinit();
         _ = self.map.remove(base_id);
 
@@ -276,7 +233,6 @@ test "outbound -> inbound roundtrip rekonstruiert die Originaldaten" {
     const src = [_]u8{0x01} ** 16;
     const dst = [_]u8{0x02} ** 16;
 
-    // Groesser als CHUNK_SIZE (1200), damit mehrere Fragmente entstehen.
     const original = "A" ** 3000;
 
     const packets = try translateOutbound(io, allocator, original, src, dst, 0xAABBCCDD, key);
@@ -325,9 +281,6 @@ test "outbound -> inbound roundtrip funktioniert auch in umgekehrter Fragment-Re
     var buf = ReassemblyBuffer.init(allocator);
     defer buf.deinit();
 
-    // Fragmente in umgekehrter Reihenfolge einspielen - das letzte Fragment
-    // (mit total_fragments im Header) kommt also ZUERST an. Das ist genau
-    // der Fall, den die alte (seq+1)-Ableitung nicht robust handhaben konnte.
     var assembled: ?[]u8 = null;
     var i: usize = packets.len;
     while (i > 0) {
@@ -376,11 +329,9 @@ test "insert verwirft widerspruechliches total fuer denselben base_id" {
     var buf = ReassemblyBuffer.init(allocator);
     defer buf.deinit();
 
-    // Erstes Fragment fuer base_id=7 legt total=3 fest.
     const r1 = try buf.insert(7, 0, 3, "a");
     try testing.expect(r1 == null);
 
-    // Zweites Fragment behauptet total=99 fuer denselben base_id -> Konflikt.
     try testing.expectError(error.InconsistentTotal, buf.insert(7, 1, 99, "b"));
 }
 
@@ -410,7 +361,6 @@ test "insert ersetzt Duplikat-Fragment statt zu leaken" {
     const r1 = try buf.insert(5, 0, 2, "first");
     try testing.expect(r1 == null);
 
-    // seq=0 kommt nochmal an (z.B. Retransmit) mit anderem Inhalt.
     const r2 = try buf.insert(5, 0, 2, "second");
     try testing.expect(r2 == null);
 
@@ -418,7 +368,6 @@ test "insert ersetzt Duplikat-Fragment statt zu leaken" {
     try testing.expect(r3 != null);
     defer allocator.free(r3.?);
 
-    // Der zuletzt eingefuegte Wert fuer seq=0 gewinnt.
     try testing.expectEqualSlices(u8, "secondx", r3.?);
 }
 
@@ -438,7 +387,6 @@ test "decryptFragment erkennt manipulierte Ciphertext-Bytes" {
         allocator.free(packets);
     }
 
-    // Ein Byte im Ciphertext-Bereich (nach Header+Nonce) kippen.
     const tamper_offset = header.HEADER_SIZE + NONCE_SIZE;
     packets[0][tamper_offset] ^= 0x01;
 

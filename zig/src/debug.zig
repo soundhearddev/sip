@@ -11,7 +11,7 @@ const trust = @import("trust.zig");
 
 const Module = struct {
     name: []const u8,
-    run: *const fn (process.Init) anyerror!void, // <-- process.Init hinzu
+    run: *const fn (process.Init) anyerror!void,
 };
 
 const modules: []const Module = &.{
@@ -68,5 +68,5 @@ pub fn main(init: process.Init) !void {
     const mod = modules[choice - 1];
     try stdout.print("\n--- Starte {s}.main() ---\n\n", .{mod.name});
     try stdout.flush();
-    try mod.run(init); // <-- init weitergeben
+    try mod.run(init);
 }

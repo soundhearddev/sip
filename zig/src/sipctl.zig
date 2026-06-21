@@ -18,9 +18,6 @@ const ArgIter = struct {
     }
 };
 
-// ---------------------------------------------------------------------
-// Password handling
-// ---------------------------------------------------------------------
 fn readPasswordInteractive(io: std.Io, stdout: *Io.Writer, prompt: []const u8, out: []u8) ![]const u8 {
     try stdout.writeAll(prompt);
     try stdout.flush();
@@ -71,20 +68,17 @@ fn resolvePassword(
     buf: []u8,
     confirm: bool,
 ) ![]const u8 {
-    // 1) --password Flag
     if (src.flag) |p| {
         if (p.len > buf.len) return error.NoSpaceLeft;
         @memcpy(buf[0..p.len], p);
         return buf[0..p.len];
     }
-    // 2) Env Variable
     if (env_map.get(src.env_name)) |env_pw| {
         if (env_pw.len > buf.len) return error.NoSpaceLeft;
         @memcpy(buf[0..env_pw.len], env_pw);
         return buf[0..env_pw.len];
     }
 
-    // 3) Interaktiver Prompt
     const pw = try readPasswordInteractive(io, stdout, "Passwort: ", buf);
     if (confirm) {
         var confirm_buf: [256]u8 = undefined;
@@ -93,10 +87,6 @@ fn resolvePassword(
     }
     return pw;
 }
-
-// ---------------------------------------------------------------------
-// Listing identities
-// ---------------------------------------------------------------------
 
 const ListCtx = struct {
     stdout: *Io.Writer,
@@ -153,10 +143,6 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
     }
     try stdout.flush();
 }
-
-// ---------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------
 
 fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
@@ -320,10 +306,6 @@ fn printHelp(stdout: *Io.Writer) !void {
     try stdout.flush();
 }
 
-// ---------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------
-
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
@@ -334,7 +316,7 @@ pub fn main(init: std.process.Init) !void {
     const arena_alloc = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(arena_alloc);
 
-    var arg_idx: usize = 1; // argv[0] ist der Programmname, also direkt überspringen
+    var arg_idx: usize = 1;
     var args = ArgIter{ .argv = argv, .idx = &arg_idx };
 
     const first = args.next();

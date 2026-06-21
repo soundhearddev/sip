@@ -1,3 +1,5 @@
+// Deprecated!!!!
+
 const std = @import("std");
 const session = @import("session.zig");
 const trust = @import("trust.zig");
@@ -15,7 +17,6 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("[Bootstrap] Ziel: [{s}]:{d}\n", .{ host, BOOTSTRAP_PORT });
 
-    // Eigene Keys
     const own_ed = Ed25519.KeyPair.generate(io);
     const own_pub = own_ed.public_key.toBytes();
     const own_mesh = session.peerMeshAddr(own_pub);
@@ -23,17 +24,13 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("[Bootstrap] mesh-addr : {x}\n", .{own_mesh});
     std.debug.print("[Bootstrap] ed_pub    : {x}...\n\n", .{own_pub[0..8]});
 
-    // TCP Verbindung
     std.debug.print("[Bootstrap] Verbinde...\n", .{});
     const addr = try std.Io.net.IpAddress.parse(host, BOOTSTRAP_PORT);
     const stream = try addr.connect(io, .{ .mode = .stream });
     defer stream.close(io);
     std.debug.print("[Bootstrap] Verbunden\n", .{});
 
-    // ----------------------------
-    // Senden
-    // ----------------------------
-    const name = "client-test.mesh"; // debug test zeug requistry kommt noch
+    const name = "client-test.mesh";
 
     var w_buf: [1024]u8 = undefined;
     var writer = stream.writer(io, &w_buf);
@@ -52,9 +49,6 @@ pub fn main(init: std.process.Init) !void {
     try writer.interface.writeByte(0);
     try writer.interface.flush();
 
-    // ----------------------------
-    // Antwort lesen
-    // ----------------------------
     var r_buf: [512]u8 = undefined;
     var reader = stream.reader(io, &r_buf);
 
@@ -63,12 +57,12 @@ pub fn main(init: std.process.Init) !void {
     const chalp = try reader.interface.take(32);
     var challenge: [32]u8 = undefined;
     @memcpy(&challenge, chalp[0..32]);
-    std.debug.print("[Bootstrap] Challenge empfangen\n", .{}); // ← add
+    std.debug.print("[Bootstrap] Challenge empfangen\n", .{});
 
     const sig = try session.signChallenge(own_ed, challenge);
     try writer.interface.writeAll(&sig);
     try writer.interface.flush();
-    std.debug.print("[Bootstrap] Signatur gesendet\n", .{}); // ← add
+    std.debug.print("[Bootstrap] Signatur gesendet\n", .{});
 
     const status = try reader.interface.take(4);
     std.debug.print("[Bootstrap] Status bytes: {d}\n", .{status.len});
@@ -79,7 +73,6 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    // Server Info: ed_pub(32) + mesh_addr(32) + name_len(1) + name
     std.debug.print("[Bootstrap] Lese Server-Info...\n", .{});
 
     const srv_pub_slice = try reader.interface.take(32);

@@ -74,10 +74,6 @@ pub fn formatSipAddress(buf: []u8, base: [32]u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "sip1{x}", .{base[0..20]});
 }
 
-// ---------------------------------------------------------------------
-// Key creation / loading / deletion
-// ---------------------------------------------------------------------
-
 pub fn createIdentity(io: std.Io, name: []const u8, password: []const u8) !KeyPair {
     if (identityExists(io, name)) return SipError.IdentityAlreadyExists;
 
@@ -157,9 +153,6 @@ pub fn deleteIdentity(io: std.Io, name: []const u8) !void {
     try cwd.deleteTree(io, dpath);
 }
 
-/// Ändert das Passwort einer Identität (entschlüsselt mit old_password,
-/// verschlüsselt denselben Private Key neu mit new_password). Der Public
-/// Key und damit die SIP-Adresse bleiben dabei garantiert unverändert.
 pub fn changePassword(io: std.Io, name: []const u8, old_password: []const u8, new_password: []const u8) !KeyPair {
     const kp = try loadIdentity(io, name, old_password);
 
@@ -171,9 +164,6 @@ pub fn changePassword(io: std.Io, name: []const u8, old_password: []const u8, ne
     return try storeIdentity(io, name, kp, new_password);
 }
 
-/// Verschlüsselt ein bereits vorhandenes KeyPair mit `password` und
-/// schreibt es nach keys/<name>/. Wird von createIdentity (neuer Key)
-/// und changePassword (bestehender Key, neues Passwort) gemeinsam genutzt.
 fn storeIdentity(io: std.Io, name: []const u8, kp: KeyPair, password: []const u8) !KeyPair {
     var dir_buf: [300]u8 = undefined;
     const dir = try identityDir(&dir_buf, name);
@@ -235,14 +225,8 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: KeyPair, password: []const u8
     return kp;
 }
 
-// ---------------------------------------------------------------------
-// Listing identities
-// ---------------------------------------------------------------------
-
 pub const ListError = error{KeyRootMissing} || anyerror;
 
-/// Ruft `callback(entry)` für jede gefundene Identität in keys/ auf.
-/// Gibt ListError.KeyRootMissing zurück falls der keys/-Ordner nicht existiert.
 pub fn forEachIdentity(
     io: std.Io,
     comptime Context: type,

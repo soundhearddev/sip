@@ -1,9 +1,6 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 
-// ==============================================================================
-// KONFIGURATION
-// ==============================================================================
 const DEBUG = false;
 const ANZAHL_IPS: usize = 1;
 const LEBENSDAUER_SEKUNDEN: ?u64 = 60;
