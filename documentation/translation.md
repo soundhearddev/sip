@@ -1,10 +1,3 @@
-# translation.zig — Ablauf im Detail
-
-Dieses Dokument erklärt, was `translation.zig` Zeile für Zeile tut, mit
-ASCII-Skizzen für jeden Schritt. Am Ende steht eine Liste von Dingen, die
-man noch ändern oder ergänzen könnte.
-
----
 
 ## 1. Die zwei Richtungen im Überblick
 
@@ -40,12 +33,11 @@ Nachricht** zurück.
 const fragments = try frag.fragmentData(allocator, data, src, dst, conn_id);
 ```
 
-Stell dir einen Brief vor, der zu groß für einen Umschlag ist:
 
 ```
   Original-Daten (z.B. 3000 Byte)
   ┌──────────────────────────────────────────────────┐
-  │////////////////////////////////////////////////////│
+  │//////////////////////////////////////////////////│
   └──────────────────────────────────────────────────┘
                          │
                          │  frag.fragmentData()
@@ -69,6 +61,8 @@ Jedes Fragment hat schon einen eigenen Header mit:
 das ist komplett Aufgabe von `fragmentation.zig`. `translation.zig`
 bekommt einfach eine fertige Liste.
 
+Hierzu ist zu erwähnen, dass das komplette fragmentierung system unter SIP zurzeit nicht weiter entwickelt wird, da sich zurzeit eher auf die translation nach tcp konzentriert wird und dafür eine eigenen fragemntation nciht nötig ist. falls in der zukunft kompatiblität in udp oder raw IP nötig ist, wird villeicht fragemntaiton.zig fertiggestellt.
+
 ### 2.2 Schritt 2: Jedes Fragment einzeln verschlüsseln
 
 Für jedes Fragment aus der Liste wird `encryptFragment()` aufgerufen:
@@ -84,7 +78,7 @@ Schauen wir uns **ein** Fragment im Detail an:
 ```
   Rohes Fragment (von fragmentation.zig):
   ┌─────────────────┬──────────────────────────┐
-  │  Header (50 B)  │     Payload (≤1200 B)    │
+  │  Header (42 B)  │     Payload (≤1200 B)    │
   └─────────────────┴──────────────────────────┘
          │                       │
          │                       │
@@ -103,25 +97,6 @@ Schauen wir uns **ein** Fragment im Detail an:
                        ▼                            ▼
               Ciphertext (≤1200 B)          Auth-Tag (16 B)
               (verschlüsselter Payload)     ("Siegel")
-```
-
-**Was ist eine Nonce, und warum braucht man sie?**
-
-```
-  Bevor verschlüsselt wird, zieht encryptFragment() 12 zufällige Bytes:
-
-  var nonce: [12]u8 = undefined;
-  rng_impl.interface().bytes(&nonce);
-
-  Stell dir die Nonce wie eine einmalige Seriennummer vor.
-  Ohne sie: zwei gleiche Nachrichten sehen verschlüsselt GLEICH aus.
-  Mit ihr: jede Verschlüsselung sieht anders aus, selbst bei
-           identischem Inhalt.
-
-  WICHTIGE REGEL: eine Nonce darf mit demselben Schlüssel NIE
-  zweimal verwendet werden. Tut man es doch, kann ein Angreifer
-  daraus Informationen über den Inhalt UND im schlimmsten Fall den
-  Schlüssel selbst ableiten.
 ```
 
 **Was ist AAD (Additional Authenticated Data)?**
@@ -152,7 +127,7 @@ Schauen wir uns **ein** Fragment im Detail an:
 
   ┌──────────┬───────────┬─────────────────────┬──────────┐
   │ Header   │  Nonce    │     Ciphertext      │ Auth-Tag │
-  │ (50 B)   │  (12 B)   │   (= Payload-Länge) │  (16 B)  │
+  │ (42 B)   │  (12 B)   │   (= Payload-Länge) │  (16 B)  │
   └──────────┴───────────┴─────────────────────┴──────────┘
    lesbar      lesbar         unlesbar             lesbar
    (als AAD    (muss beim                        (Prüfsumme,
@@ -244,11 +219,10 @@ const parsed = try header.parsePacket(decrypted);
 
   entschlüsselte Bytes
   ┌──────────────────────────┬─────────────────────┐
-  │  Header (50 Byte)        │  Payload             │
-  │  - magic                 │  (Originaldaten      │
-  │  - src/dst                │   dieses Fragments)  │
-  │  - conn_id                │                       │
-  │  - total_fragments        │                       │
+  │  Header (42 Byte)        │  Payload            │
+  │  - magic                 │  (Originaldaten     │
+  │  - src/dst               │   dieses Fragments) │
+  │  - conn_id               │                     │
   └──────────────────────────┴─────────────────────┘
 
   Reihenfolge ist bewusst: ERST entschlüsseln/prüfen, DANN
@@ -515,19 +489,3 @@ entschärfen, aber ein zusätzlicher harter Cap auf die Anzahl
 gleichzeitig offener Sammlungen (unabhängig von Cleanup) wäre eine
 weitere mögliche Verteidigungsschicht.
 
----
-
-## 6. Kurz zusammengefasst
-
-```
-  translateOutbound:  Daten → fragmentieren → jedes Fragment einzeln
-                       verschlüsseln (Header bleibt lesbar, Payload nicht)
-                       → Liste fertiger Pakete
-
-  translateInbound:   ein Paket → entschlüsseln+prüfen → Header lesen
-                       → einsortieren → "warte noch" ODER fertige Daten
-
-  Sicherheits-Kernidee: jedes Fragment hat seinen EIGENEN Auth-Tag,
-  damit Manipulation sofort auffällt — nicht erst, nachdem die ganze
-  (potenziell riesige) Nachricht gesammelt wurde.
-```
