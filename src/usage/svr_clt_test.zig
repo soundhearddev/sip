@@ -1,9 +1,10 @@
 const std = @import("std");
-const synet = @import("synet.zig");
+const synet = @import("synet");
 const keyexchange = @import("keyexchange.zig");
-const header = @import("header.zig");
-const translation = @import("translation.zig");
-const sip = @import("sip.zig");
+const header = @import("header");
+const translation = @import("translation");
+const sip = @import("sip");
+
 
 const DEFAULT_PORT: u16 = 9443;
 
@@ -498,9 +499,9 @@ fn runServer(io: std.Io, allocator: std.mem.Allocator, port: u16, use_v6: bool, 
             "[server]   magic={x} packet_type={d} conn_id={d}\n" ++
             "[server]   payload: {d} Byte\n",
         .{
-            parsed.header.magic,
-            parsed.header.packet_type,
-            parsed.header.conn_id,
+            parsed.header.outer.magic,
+            parsed.header.outer.command,
+            parsed.header.inner.conn_id,
             parsed.payload.len,
         },
     );
@@ -561,7 +562,7 @@ fn runClient(
     const buf = try allocator.alloc(u8, header.HEADER_SIZE + payload.len);
     defer allocator.free(buf);
 
-    const packet = try header.buildPacket(buf, src, dst, 1, .data, payload);
+    const packet = try header.buildPacket(buf, src, dst, 1, .Data, payload);
     const encrypted = try translation.encryptFragment(io, allocator, packet, key);
     defer allocator.free(encrypted);
 

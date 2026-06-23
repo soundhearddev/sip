@@ -150,3 +150,17 @@ pub fn currentAddresses(gpa: std.mem.Allocator, io: std.Io, iface: []const u8) !
     }
     return set;
 }
+
+
+
+
+
+
+
+pub fn randomMeshAddr(io: std.Io) [16]u8 {
+    const rng_src: std.Random.IoSource = .{ .io = io };
+    const rand = rng_src.interface();
+    var addr: [16]u8 = undefined;
+    rand.bytes(&addr);
+    return addr;
+}

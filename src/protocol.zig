@@ -4,6 +4,12 @@ const std = @import("std");
 
 /// Command opcodes (8 bits, so max 256 values; we use 0x01-0x08)
 pub const Command = enum(u8) {
+
+
+    discovery = 0x00,
+
+
+
     /// ReadFile: request to read a file from the remote side
     /// Payload: path (null-terminated string, max 256 bytes)
     ReadFile = 0x01,

@@ -1,21 +1,19 @@
 const std = @import("std");
 
-pub const sip = @import("sip.zig");
-pub const synet = @import("synet.zig");
+const sip = @import("sip");
+const header = @import("header");
+const synet = @import("synet");
+const translation = @import("translation");
+const keyexchange = @import("keyexchange");
 
-pub const header = @import("header.zig");
-pub const address = @import("usage/address.zig");
-pub const fragmentation = @import("fragmentation.zig");
+pub fn main() !void {
+    const stdout = std.io.getStdOut().writer();
 
-pub const keyexchange = @import("keyexchange.zig");
+    try stdout.print("App starting...\n", .{});
 
-pub const utils = @import("usage/utils.zig");
-pub const translation = @import("translation.zig");
-pub const time = @import("time.c");
+    // Beispiel: prüfe ob Module erreichbar sind
+    try stdout.print("Modules loaded: sip, header, synet, translation, keyexchange\n", .{});
 
-pub const sipctl = @import("sipctl.zig");
-pub const server_cli = @import("server_cli.zig");
-
-pub fn init() void {}
-
-pub fn deinit() void {}
+    // optional: hier dein echter entry code
+    // z.B. server start / client logic / dispatcher
+}

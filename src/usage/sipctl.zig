@@ -1,5 +1,5 @@
 const std = @import("std");
-const sip = @import("sip.zig");
+const sip = @import("sip");
 const Io = std.Io;
 
 const CliError = error{

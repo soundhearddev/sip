@@ -3,7 +3,7 @@
 // da zurzeit nur mit tcp gearbeitet wird und dies dafür nicht gebraucht wird
 
 const std = @import("std");
-const header = @import("header.zig");
+const header = @import("header");
 
 pub const CHUNK_SIZE: usize = 1200;
 

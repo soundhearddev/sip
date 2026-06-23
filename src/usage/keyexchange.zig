@@ -1,5 +1,5 @@
 const std = @import("std");
-const sip = @import("sip.zig");
+const sip = @import("sip");
 
 const X25519 = std.crypto.dh.X25519;
 const Ed25519 = std.crypto.sign.Ed25519;

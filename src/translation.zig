@@ -1,6 +1,6 @@
 const std = @import("std");
-const header = @import("header.zig");
-const frag = @import("fragmentation.zig");
+const header = @import("header");
+const frag = @import("fragmentation");
 
 pub const KEY_SIZE: usize = 32;
 pub const NONCE_SIZE: usize = 12;
