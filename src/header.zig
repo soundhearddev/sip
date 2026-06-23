@@ -21,6 +21,8 @@ pub const HEADER_SIZE: usize = 42;
 // 18      16    dst mesh-addr
 // 34      8     Connection ID
 
+//TODO implemntierung von protocol.zig in header format
+
 pub const Header = struct {
     magic: u8,
     packet_type: u8,

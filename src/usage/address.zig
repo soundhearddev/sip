@@ -1,7 +1,7 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 
-const DEBUG = false;
+const DEBUG = true;
 const ANZAHL_IPS: usize = 1;
 const LEBENSDAUER_SEKUNDEN: ?u64 = 60;
 
@@ -30,7 +30,7 @@ fn buildAddress(
             if (ttl) |t| {
                 std.debug.print("[✓] {s} (TTL: {d}s)\n", .{ new_addr, t });
             } else {
-                std.debug.print("[✓] {s} (Permanent)\n", .{new_addr});
+                td.debug.print("[✓] {s} (Permanent)\n", .{new_addr});
             }
         } else {
             std.debug.print("[✗] Fehler bei {s}\n", .{new_addr});

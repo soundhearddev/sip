@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(sipctl);
 
     const server_mod = b.createModule(.{
-        .root_source_file = b.path("src/server_cli.zig"),
+        .root_source_file = b.path("src/server_test.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -41,7 +41,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const server_cli = b.addExecutable(.{
-        .name = "server_cli",
+        .name = "server_test",
         .root_module = server_mod,
     });
     b.installArtifact(server_cli);
@@ -55,6 +55,6 @@ pub fn build(b: *std.Build) void {
     const run_server = b.addRunArtifact(server_cli);
     run_server.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_server.addArgs(args);
-    const run_server_step = b.step("run-server", "Run server_cli");
+    const run_server_step = b.step("run-server", "Run server_test");
     run_server_step.dependOn(&run_server.step);
 }
