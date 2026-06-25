@@ -80,7 +80,7 @@ pub fn recvExact(sock: Socket, buf: []u8) SynetError!void {
     var received: usize = 0;
     while (received < buf.len) {
         const n = try recvSome(sock, buf[received..]);
-        if (n == 0) return error.ConnectionClosed;
+        if (n == 0) return if (received == 0) error.ConnectionClosed else error.RecvFailed;
         received += n;
     }
 }

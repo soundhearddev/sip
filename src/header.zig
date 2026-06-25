@@ -23,6 +23,7 @@ pub const HEADER_SIZE: usize = OUTER_HEADER_SIZE + INNER_HEADER_SIZE; // 46
 
 // 38      8     Connection ID
 
+// Ein ganz normales Struct – wir regeln das exakte Layout manuell über die Funktionen!
 pub const OuterHeader = struct {
     magic: u8,
     command: u8,
@@ -46,6 +47,7 @@ pub const ParsedPacket = struct {
     payload: []const u8,
 };
 
+// VORHERIGER FEHLER FIX: Hier wird exakt Byte für Byte ohne jegliches Compiler-Padding geschrieben
 fn writeOuter(buf: []u8, o: OuterHeader) void {
     buf[0] = o.magic;
     buf[1] = o.command;
@@ -54,6 +56,7 @@ fn writeOuter(buf: []u8, o: OuterHeader) void {
     @memcpy(buf[22..38], &o.dst);
 }
 
+// VORHERIGER FEHLER FIX: Hier wird exakt Byte für Byte ausgelesen. Kein Shift möglich.
 fn readOuter(buf: []const u8) OuterHeader {
     var o: OuterHeader = undefined;
 
@@ -169,7 +172,6 @@ pub fn parseOuter(data: []const u8) !OuterHeader {
     if (outer.magic != MAGIC) return error.InvalidMagic;
     return outer;
 }
-
 const testing = std.testing;
 
 test "buildPacket schreibt MAGIC und Command korrekt" {
