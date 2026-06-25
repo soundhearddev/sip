@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // ── Module (öffentlich, für andere Projekte als Library nutzbar) ──────
+    // ── Module ────────────────────────────────────────────────────────────
     const protocol_mod = b.addModule("protocol", .{
         .root_source_file = b.path("src/protocol.zig"),
     });
