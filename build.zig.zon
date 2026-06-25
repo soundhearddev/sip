@@ -1,18 +1,12 @@
 .{
-    .name = .zig,
-
-    .version = "0.0.1",
-
+    .name = .sip,
+    .version = "0.1.0",
     .fingerprint = 0xc1ce108143e65c4a,
-
     .minimum_zig_version = "0.16.0",
-
     .dependencies = .{},
-
     .paths = .{
-        //"build.zig",
-        //"build.zig.zon",
+        "build.zig",
+        "build.zig.zon",
         "src",
-        //"README.md",
     },
 }
