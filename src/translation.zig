@@ -24,6 +24,7 @@ pub fn buildOutboundPacket(
     src: [16]u8,
     dst: [16]u8,
     conn_id: u64,
+    seq_num: u32,
     command: protocol.Command,
     payload: []const u8,
     key: [KEY_SIZE]u8,
@@ -37,6 +38,7 @@ pub fn buildOutboundPacket(
         src,
         dst,
         conn_id,
+        seq_num,
         command,
         payload,
     );
@@ -185,6 +187,162 @@ pub fn decryptPacket(
     return out;
 }
 
+// ============================================================
+// Reassembly: nimmt eingehende DataChunk/DataEnd-Pakete entgegen,
+// schreibt deren Payload als Datei auf Disk und meldet, sobald
+// ein Transfer (identifiziert über conn_id) vollständig ist.
+//
+// translation.zig entscheidet bewusst NICHT, was mit den fertigen
+// Chunk-Dateien passiert (kein Zusammenfügen, kein finaler Pfad) -
+// das bleibt Aufgabe des Aufrufers (z.B. ein sip-daemon).
+// ============================================================
+
+pub const ReassemblyError = error{
+    UnexpectedSequenceNumber,
+    UnknownTransfer,
+    TooManyChunks,
+} || std.mem.Allocator.Error || anyerror;
+
+pub const MAX_CHUNKS_PER_TRANSFER: usize = 65536;
+
+const TransferState = struct {
+    next_seq: u32,
+    chunk_paths: std.ArrayList([]u8),
+
+    fn deinit(self: *TransferState, allocator: std.mem.Allocator) void {
+        for (self.chunk_paths.items) |p| allocator.free(p);
+        self.chunk_paths.deinit(allocator);
+    }
+};
+
+pub const FeedResult = union(enum) {
+    /// Paket war kein Chunk-Paket (z.B. .Data) oder Transfer ist noch nicht fertig.
+    pending,
+    /// Transfer ist komplett. Enthält die Pfade aller Chunk-Dateien dieses
+    /// Transfers, in aufsteigender seq_num-Reihenfolge. Der Aufrufer ist für
+    /// das spätere Löschen dieser Dateien verantwortlich.
+    /// Speicher (die Slice selbst sowie die einzelnen Pfad-Strings) gehört dem
+    /// Aufrufer und muss von ihm freigegeben werden.
+    complete: [][]u8,
+};
+
+pub const Reassembler = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    base_dir: []const u8,
+    transfers: std.AutoHashMap(u64, TransferState),
+
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, base_dir: []const u8) Reassembler {
+        return .{
+            .io = io,
+            .allocator = allocator,
+            .base_dir = base_dir,
+            .transfers = std.AutoHashMap(u64, TransferState).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *Reassembler) void {
+        var it = self.transfers.valueIterator();
+        while (it.next()) |state| {
+            state.deinit(self.allocator);
+        }
+        self.transfers.deinit();
+    }
+
+    fn transferDir(self: *Reassembler, buf: []u8, conn_id: u64) ![]const u8 {
+        return std.fmt.bufPrint(buf, "{s}/{x}", .{ self.base_dir, conn_id });
+    }
+
+    fn chunkPath(self: *Reassembler, buf: []u8, conn_id: u64, seq_num: u32) ![]const u8 {
+        return std.fmt.bufPrint(buf, "{s}/{x}/{d}.chunk", .{ self.base_dir, conn_id, seq_num });
+    }
+
+    fn writeChunk(self: *Reassembler, conn_id: u64, seq_num: u32, payload: []const u8) !void {
+        var dir_buf: [300]u8 = undefined;
+        const dir = try self.transferDir(&dir_buf, conn_id);
+        std.Io.Dir.cwd().createDirPath(self.io, dir) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+
+        var path_buf: [300]u8 = undefined;
+        const path = try self.chunkPath(&path_buf, conn_id, seq_num);
+
+        const f = try std.Io.Dir.cwd().createFile(self.io, path, .{});
+        defer f.close(self.io);
+        var iobuf: [4096]u8 = undefined;
+        var w = f.writer(self.io, &iobuf);
+        try w.interface.writeAll(payload);
+        try w.flush();
+
+        const gop = try self.transfers.getOrPut(conn_id);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{
+                .next_seq = 0,
+                .chunk_paths = .empty,
+            };
+        }
+        const state = gop.value_ptr;
+
+        if (seq_num != state.next_seq) return ReassemblyError.UnexpectedSequenceNumber;
+        if (state.chunk_paths.items.len >= MAX_CHUNKS_PER_TRANSFER) return ReassemblyError.TooManyChunks;
+
+        const owned_path = try self.allocator.dupe(u8, path);
+        try state.chunk_paths.append(self.allocator, owned_path);
+        state.next_seq += 1;
+    }
+
+    /// Nimmt ein bereits entschlüsseltes & geparstes Paket entgegen.
+    /// - command == .DataChunk: Chunk wird gespeichert, .pending wird zurückgegeben.
+    /// - command == .DataEnd: letzter Chunk wird gespeichert, Transfer ist fertig,
+    ///   .complete mit allen Chunk-Pfaden (Reihenfolge!) wird zurückgegeben. Der
+    ///   Reassembler vergisst danach diesen Transfer (conn_id kann wiederverwendet
+    ///   werden).
+    /// - jedes andere Command: .pending, Reassembler tut nichts (kein Chunking).
+    pub fn feed(self: *Reassembler, packet: header.ParsedPacket) !FeedResult {
+        const conn_id = packet.header.inner.conn_id;
+        const seq_num = packet.header.inner.seq_num;
+
+        switch (packet.command) {
+            // Ein normales .Data Paket verhält sich wie ein Single-Chunk-Transfer
+            .Data => {
+                try self.writeChunk(conn_id, seq_num, packet.payload);
+
+                var state = self.transfers.get(conn_id) orelse return ReassemblyError.UnknownTransfer;
+                _ = self.transfers.remove(conn_id);
+
+                const owned_slice = try state.chunk_paths.toOwnedSlice(self.allocator);
+                return .{ .complete = owned_slice };
+            },
+            .DataChunk => {
+                try self.writeChunk(conn_id, seq_num, packet.payload);
+                return .pending;
+            },
+            .DataEnd => {
+                try self.writeChunk(conn_id, seq_num, packet.payload);
+
+                var state = self.transfers.get(conn_id) orelse return ReassemblyError.UnknownTransfer;
+                _ = self.transfers.remove(conn_id);
+
+                const owned_slice = try state.chunk_paths.toOwnedSlice(self.allocator);
+                return .{ .complete = owned_slice };
+            },
+            else => return .pending,
+        }
+    }
+
+    pub fn abort(self: *Reassembler, conn_id: u64) void {
+        if (self.transfers.fetchRemove(conn_id)) |kv| {
+            var state = kv.value;
+            state.deinit(self.allocator);
+        }
+
+        var dir_buf: [300]u8 = undefined;
+        const dir = self.transferDir(&dir_buf, conn_id) catch return;
+        std.Io.Dir.cwd().deleteTree(self.io, dir) catch {};
+    }
+};
+
 const testing = std.testing;
 
 test "encrypt -> decrypt Roundtrip" {
@@ -197,7 +355,7 @@ test "encrypt -> decrypt Roundtrip" {
     const payload = "Hallo Welt, das ist ein Test-Payload!";
 
     var raw_buf: [header.HEADER_SIZE + payload.len]u8 = undefined;
-    _ = try header.buildPacket(&raw_buf, src, dst, 0xDEADBEEF, .Data, payload);
+    _ = try header.buildPacket(&raw_buf, src, dst, 0xDEADBEEF, 0, .Data, payload);
 
     const encrypted = try encryptPacket(io, allocator, &raw_buf, key);
     defer allocator.free(encrypted);
@@ -217,7 +375,7 @@ test "decrypt schlägt fehl bei manipuliertem Ciphertext" {
     const dst = [_]u8{0xBB} ** 16;
 
     var raw_buf: [header.HEADER_SIZE + 32]u8 = undefined;
-    _ = try header.buildPacket(&raw_buf, src, dst, 1, .Data, "manipulier mich nicht!!!");
+    _ = try header.buildPacket(&raw_buf, src, dst, 1, 0, .Data, "manipulier mich nicht!!!");
 
     const encrypted = try encryptPacket(io, allocator, &raw_buf, key);
     defer allocator.free(encrypted);
@@ -239,7 +397,7 @@ test "decrypt schlägt fehl bei manipuliertem Header (Additional Data)" {
     const dst = [_]u8{0x22} ** 16;
 
     var raw_buf: [header.HEADER_SIZE + 16]u8 = undefined;
-    _ = try header.buildPacket(&raw_buf, src, dst, 2, .Keepalive, "header auth test");
+    _ = try header.buildPacket(&raw_buf, src, dst, 2, 0, .Keepalive, "header auth test");
 
     const encrypted = try encryptPacket(io, allocator, &raw_buf, key);
     defer allocator.free(encrypted);
@@ -277,6 +435,7 @@ test "buildOutboundPacket hat korrekten Längen-Präfix" {
         src,
         dst,
         42,
+        0,
         .Data,
         "test payload",
         key,
@@ -285,4 +444,72 @@ test "buildOutboundPacket hat korrekten Längen-Präfix" {
 
     try testing.expect(wire.len > 0);
     try testing.expectEqual(wire[0], header.MAGIC);
+}
+
+test "Reassembler: DataChunk + DataEnd liefert alle Pfade in Reihenfolge" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    var r = Reassembler.init(io, allocator, "/tmp/sip-test-reassembly");
+    defer r.deinit();
+
+    const conn_id: u64 = 0xCAFEBABE;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    {
+        var buf0: [header.HEADER_SIZE + 5]u8 = undefined;
+        _ = try header.buildPacket(&buf0, src, dst, conn_id, 0, .DataChunk, "chunk");
+        const parsed0 = try header.parsePacket(&buf0);
+        const result = try r.feed(parsed0);
+        try testing.expectEqual(FeedResult.pending, result);
+    }
+
+    {
+        var buf1: [header.HEADER_SIZE + 3]u8 = undefined;
+        _ = try header.buildPacket(&buf1, src, dst, conn_id, 1, .DataEnd, "end");
+        const parsed1 = try header.parsePacket(&buf1);
+        const result = try r.feed(parsed1);
+
+        switch (result) {
+            .complete => |paths| {
+                defer allocator.free(paths);
+                defer for (paths) |p| allocator.free(p);
+
+                try testing.expectEqual(@as(usize, 2), paths.len);
+                try testing.expect(std.mem.endsWith(u8, paths[0], "0.chunk"));
+                try testing.expect(std.mem.endsWith(u8, paths[1], "1.chunk"));
+            },
+            .pending => return error.ExpectedComplete,
+        }
+    }
+}
+
+test "Reassembler: abort räumt Zustand und Dateien auf" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    var r = Reassembler.init(io, allocator, "/tmp/sip-test-reassembly-abort");
+    defer r.deinit();
+
+    const conn_id: u64 = 0xDEAD;
+    const src = [_]u8{0xAA} ** 16;
+    const dst = [_]u8{0xBB} ** 16;
+
+    var buf: [header.HEADER_SIZE + 4]u8 = undefined;
+    _ = try header.buildPacket(&buf, src, dst, conn_id, 0, .DataChunk, "data");
+    const parsed = try header.parsePacket(&buf);
+    _ = try r.feed(parsed);
+
+    try testing.expect(r.transfers.contains(conn_id));
+
+    r.abort(conn_id);
+
+    try testing.expect(!r.transfers.contains(conn_id));
+    const dir_exists = blk: {
+        const dir = std.Io.Dir.cwd().openDir(io, "/tmp/sip-test-reassembly-abort/dead", .{}) catch break :blk false;
+        dir.close(io);
+        break :blk true;
+    };
+    try testing.expect(!dir_exists);
 }

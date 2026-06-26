@@ -18,9 +18,18 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-
     const run_translation_tests = b.addRunArtifact(translation_tests);
     b.step("test-translation", "Run translation tests").dependOn(&run_translation_tests.step);
+
+    const fragmentation_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fragmentation.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_fragmentation_tests = b.addRunArtifact(fragmentation_tests);
+    b.step("test-fragmentation", "Run fragmentation tests").dependOn(&run_fragmentation_tests.step);
 
     const header_tests = b.addTest(.{
         .root_module = b.createModule(.{

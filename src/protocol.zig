@@ -36,6 +36,13 @@ pub const Command = enum(u8) {
     /// Payload: empty (or optional timestamp)
     Keepalive = 0x09,
 
+    /// DataChunk: Teil eines mehrteiligen Datentransfers (nicht der letzte Chunk)
+    /// Payload: arbitrary bytes
+    DataChunk = 0x0A,
+    /// DataEnd: letzter Chunk eines mehrteiligen Datentransfers
+    /// Payload: arbitrary bytes (kann auch leer sein, falls vorheriger Chunk exakt aufging)
+    DataEnd = 0x0B,
+
     /// Unknown: used for graceful handling of unrecognized commands
     _,
 };
@@ -105,7 +112,7 @@ pub fn validatePayload(allocator: std.mem.Allocator, cmd: Command, payload: []co
             }
         },
 
-        .discovery, .Data => {
+        .discovery, .Data, .DataChunk, .DataEnd => {
             // No specific validation
         },
 

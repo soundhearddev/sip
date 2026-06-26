@@ -3,18 +3,18 @@ const std = @import("std");
 pub const MAGIC: u8 = 0xA9;
 
 const protocol = @import("protocol.zig");
-const sip = @import("sip");
+
 pub const Command = protocol.Command;
 
 pub const LENGTH_SIZE: usize = 4;
 
 pub const OUTER_HEADER_SIZE: usize = 38;
-pub const INNER_HEADER_SIZE: usize = 8;
-pub const HEADER_SIZE: usize = OUTER_HEADER_SIZE + INNER_HEADER_SIZE; // 46
+pub const INNER_HEADER_SIZE: usize = 12;
+pub const HEADER_SIZE: usize = OUTER_HEADER_SIZE + INNER_HEADER_SIZE; // 50
 
 // Offset  Size  Field
 // 0       1     Magic
-// 1       1     PacketType
+// 1       1     Command
 // 2       4     Length
 // 6       16    src mesh-addr
 // 22      16    dst mesh-addr
@@ -22,8 +22,8 @@ pub const HEADER_SIZE: usize = OUTER_HEADER_SIZE + INNER_HEADER_SIZE; // 46
 // --- inner (verschlüsselbar) ---
 
 // 38      8     Connection ID
+// 46      4     Sequence Number
 
-// Ein ganz normales Struct – wir regeln das exakte Layout manuell über die Funktionen!
 pub const OuterHeader = struct {
     magic: u8,
     command: u8,
@@ -34,6 +34,7 @@ pub const OuterHeader = struct {
 
 pub const InnerHeader = struct {
     conn_id: u64,
+    seq_num: u32,
 };
 
 pub const Header = struct {
@@ -47,7 +48,6 @@ pub const ParsedPacket = struct {
     payload: []const u8,
 };
 
-// VORHERIGER FEHLER FIX: Hier wird exakt Byte für Byte ohne jegliches Compiler-Padding geschrieben
 fn writeOuter(buf: []u8, o: OuterHeader) void {
     buf[0] = o.magic;
     buf[1] = o.command;
@@ -56,7 +56,6 @@ fn writeOuter(buf: []u8, o: OuterHeader) void {
     @memcpy(buf[22..38], &o.dst);
 }
 
-// VORHERIGER FEHLER FIX: Hier wird exakt Byte für Byte ausgelesen. Kein Shift möglich.
 fn readOuter(buf: []const u8) OuterHeader {
     var o: OuterHeader = undefined;
 
@@ -92,10 +91,19 @@ fn writeInner(buf: []u8, i: InnerHeader) void {
         i.conn_id,
         .little,
     );
+    std.mem.writeInt(
+        u32,
+        buf[8..12],
+        i.seq_num,
+        .little,
+    );
 }
 
 fn readInner(buf: []const u8) InnerHeader {
-    return .{ .conn_id = std.mem.readInt(u64, buf[0..8], .little) };
+    return .{
+        .conn_id = std.mem.readInt(u64, buf[0..8], .little),
+        .seq_num = std.mem.readInt(u32, buf[8..12], .little),
+    };
 }
 
 fn writeHeader(buf: []u8, h: Header) void {
@@ -115,6 +123,7 @@ pub fn buildPacket(
     src: [16]u8,
     dst: [16]u8,
     conn_id: u64,
+    seq_num: u32,
     ptype: protocol.Command,
     payload: []const u8,
 ) ![]u8 {
@@ -131,7 +140,7 @@ pub fn buildPacket(
             .src = src,
             .dst = dst,
         },
-        .inner = .{ .conn_id = conn_id },
+        .inner = .{ .conn_id = conn_id, .seq_num = seq_num },
     };
     writeHeader(buf[0..HEADER_SIZE], header);
     @memcpy(buf[HEADER_SIZE..][0..payload.len], payload);
@@ -182,7 +191,7 @@ test "buildPacket schreibt MAGIC und Command korrekt" {
     const src = [_]u8{0x01} ** 16;
     const dst = [_]u8{0x02} ** 16;
 
-    const pkt = try buildPacket(&buf, src, dst, 99, .Data, "test");
+    const pkt = try buildPacket(&buf, src, dst, 99, 0, .Data, "test");
 
     try testing.expectEqual(MAGIC, pkt[0]);
     try testing.expectEqual(@intFromEnum(protocol.Command.Data), pkt[1]);
@@ -193,7 +202,7 @@ test "buildPacket schreibt src und dst korrekt" {
     const src = [_]u8{0xAA} ** 16;
     const dst = [_]u8{0xBB} ** 16;
 
-    const pkt = try buildPacket(&buf, src, dst, 0, .Data, "");
+    const pkt = try buildPacket(&buf, src, dst, 0, 0, .Data, "");
 
     try testing.expectEqualSlices(u8, &src, pkt[6..22]);
     try testing.expectEqualSlices(u8, &dst, pkt[22..38]);
@@ -204,7 +213,7 @@ test "buildPacket schreibt conn_id korrekt (little-endian)" {
     const src = [_]u8{0x00} ** 16;
     const dst = [_]u8{0x00} ** 16;
 
-    const pkt = try buildPacket(&buf, src, dst, 0xDEADBEEFCAFEBABE, .Data, "");
+    const pkt = try buildPacket(&buf, src, dst, 0xDEADBEEFCAFEBABE, 0, .Data, "");
 
     const conn_id = std.mem.readInt(u64, pkt[38..46], .little);
     try testing.expectEqual(@as(u64, 0xDEADBEEFCAFEBABE), conn_id);
@@ -216,7 +225,7 @@ test "buildPacket schreibt payload korrekt" {
     const src = [_]u8{0x01} ** 16;
     const dst = [_]u8{0x02} ** 16;
 
-    const pkt = try buildPacket(&buf, src, dst, 1, .Data, payload);
+    const pkt = try buildPacket(&buf, src, dst, 1, 0, .Data, payload);
 
     try testing.expectEqualSlices(u8, payload, pkt[HEADER_SIZE..]);
 }
@@ -227,7 +236,7 @@ test "parsePacket Roundtrip" {
     const src = [_]u8{0x11} ** 16;
     const dst = [_]u8{0x22} ** 16;
 
-    const pkt = try buildPacket(&buf, src, dst, 0xCAFE, .Data, payload);
+    const pkt = try buildPacket(&buf, src, dst, 0xCAFE, 0, .Data, payload);
     const parsed = try parsePacket(pkt);
 
     try testing.expectEqual(MAGIC, parsed.header.outer.magic);
@@ -242,7 +251,7 @@ test "parsePacket lehnt falsches Magic ab" {
     const src = [_]u8{0x00} ** 16;
     const dst = [_]u8{0x00} ** 16;
 
-    _ = try buildPacket(&buf, src, dst, 0, .Data, "");
+    _ = try buildPacket(&buf, src, dst, 0, 0, .Data, "");
     buf[0] = 0x00; // Magic korrumpieren
 
     try testing.expectError(error.InvalidMagic, parsePacket(&buf));
@@ -258,7 +267,7 @@ test "buildPacket lehnt zu kleinen Buffer ab" {
     const src = [_]u8{0x00} ** 16;
     const dst = [_]u8{0x00} ** 16;
 
-    try testing.expectError(error.BufferTooSmall, buildPacket(&buf, src, dst, 0, .Data, ""));
+    try testing.expectError(error.BufferTooSmall, buildPacket(&buf, src, dst, 0, 0, .Data, ""));
 }
 
 test "parseOuter liest src/dst korrekt" {
@@ -266,7 +275,7 @@ test "parseOuter liest src/dst korrekt" {
     const src = [_]u8{0x33} ** 16;
     const dst = [_]u8{0x44} ** 16;
 
-    _ = try buildPacket(&buf, src, dst, 0, .Data, "");
+    _ = try buildPacket(&buf, src, dst, 0, 0, .Data, "");
     const outer = try parseOuter(&buf);
 
     try testing.expectEqualSlices(u8, &src, &outer.src);

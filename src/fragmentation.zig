@@ -1,109 +1,173 @@
-// DEPRECATED
-// villeicht in der zukunft wieder nutzbar aber vorerst nicht,
-// da zurzeit nur mit tcp gearbeitet wird und dies dafür nicht gebraucht wird
-
 const std = @import("std");
 const header = @import("header.zig");
+const protocol = @import("protocol.zig");
+const translation = @import("translation.zig");
 
-pub const CHUNK_SIZE: usize = 1200;
+// Fragmentierung kommt nur zum Einsatz, wenn eine Payload das Limit für ein
+// einzelnes Paket überschreitet (translation.MAX_PACKET_SIZE). Für alles
+// darunter wird ganz normal translation.buildOutboundPacket mit
+// command = .Data verwendet - kein Chunking nötig.
+//
+// fragmentation.zig baut nur die fertigen, verschlüsselten Wire-Pakete
+// (DataChunk für alle bis auf den letzten, DataEnd für den letzten).
+// Das tatsächliche Senden über den Socket bleibt Aufgabe des Aufrufers.
 
-pub const FLAG_LAST: u8 = 0x08;
+pub const FragmentationError = error{
+    TooManyChunks,
+    BufferTooSmall,
+} || std.mem.Allocator.Error || translation.TranslationError;
 
-pub const MAX_TOTAL_CHUNKS: usize = std.math.maxInt(u16);
+// Etwas kleiner als translation.MAX_PACKET_SIZE wählen, um Spielraum für
+// zukünftige Overheads zu lassen (z.B. falls der Header nochmal wächst).
+pub const CHUNK_SIZE: usize = translation.MAX_PACKET_SIZE - (1024 * 1024); // 15 MiB
 
-pub const Fragment = struct {
-    data: []u8,
+pub const MAX_CHUNKS: usize = std.math.maxInt(u32);
+
+pub const WirePacketList = struct {
+    items: [][]u8,
     allocator: std.mem.Allocator,
 
-    pub fn deinit(self: Fragment) void {
-        self.allocator.free(self.data);
-    }
-};
-
-pub const FragmentList = struct {
-    items: []Fragment,
-    allocator: std.mem.Allocator,
-
-    pub fn deinit(self: FragmentList) void {
-        for (self.items) |frag| {
-            frag.deinit();
-        }
+    pub fn deinit(self: WirePacketList) void {
+        for (self.items) |pkt| self.allocator.free(pkt);
         self.allocator.free(self.items);
     }
 };
 
-pub fn fragmentData(
+/// Baut die fertigen, verschlüsselten Wire-Pakete für eine (potenziell große)
+/// Payload. Payloads <= translation.MAX_PACKET_SIZE werden als ein einzelnes
+/// .Data-Paket gebaut. Größere Payloads werden in CHUNK_SIZE-Stücke
+/// aufgeteilt: alle bis auf den letzten Chunk als .DataChunk, der letzte als
+/// .DataEnd - jeweils mit derselben conn_id und aufsteigender seq_num (0-basiert).
+///
+/// Der Aufrufer ist für das Senden der zurückgegebenen Pakete (in Reihenfolge!)
+/// sowie für das spätere Freigeben (WirePacketList.deinit) verantwortlich.
+pub fn fragmentPayload(
+    io: std.Io,
     allocator: std.mem.Allocator,
-    data: []const u8,
     src: [16]u8,
     dst: [16]u8,
     conn_id: u64,
-) !FragmentList {
-    const total_chunks = (data.len + CHUNK_SIZE - 1) / CHUNK_SIZE;
-
-    if (total_chunks > MAX_TOTAL_CHUNKS) return error.MessageTooLarge;
-
-    const fragments = try allocator.alloc(Fragment, total_chunks);
-    errdefer allocator.free(fragments);
-
-    for (0..total_chunks) |seq| {
-        const start = seq * CHUNK_SIZE;
-        const end = @min(start + CHUNK_SIZE, data.len);
-        const chunk = data[start..end];
-
-        const is_last = (seq == total_chunks - 1);
-        const flags: u8 = if (is_last) FLAG_LAST else 0x01;
-
-        const buf = try allocator.alloc(u8, header.HEADER_SIZE + chunk.len);
-        errdefer allocator.free(buf);
-
-        // deprecated header layout!!!!! MUSS FIXEN IN ZUKUNFT
-        const pkt = try header.buildPacket(
-            buf,
+    payload: []const u8,
+    key: [translation.KEY_SIZE]u8,
+) FragmentationError!WirePacketList {
+    if (payload.len <= translation.MAX_PACKET_SIZE) {
+        const wire = try translation.buildOutboundPacket(
+            io,
+            allocator,
             src,
             dst,
             conn_id,
-            .data,
-            chunk,
-            @intCast(total_chunks),
+            0,
+            .Data,
+            payload,
+            key,
         );
+        errdefer allocator.free(wire);
 
-        const encoded_conn_id: u64 =
-            (conn_id & 0x00000000FFFFFFFF) |
-            (@as(u64, @intCast(seq)) << 32) |
-            (@as(u64, flags) << 56);
+        const items = try allocator.alloc([]u8, 1);
+        items[0] = wire;
 
-        std.mem.writeInt(u64, buf[34..42], encoded_conn_id, .little);
-
-        _ = pkt;
-
-        fragments[seq] = Fragment{
-            .data = buf,
-            .allocator = allocator,
-        };
+        return WirePacketList{ .items = items, .allocator = allocator };
     }
 
-    return FragmentList{
-        .items = fragments,
-        .allocator = allocator,
-    };
+    const total_chunks = (payload.len + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    if (total_chunks > MAX_CHUNKS) return FragmentationError.TooManyChunks;
+
+    const items = try allocator.alloc([]u8, total_chunks);
+    var built: usize = 0;
+    errdefer {
+        for (items[0..built]) |pkt| allocator.free(pkt);
+        allocator.free(items);
+    }
+
+    for (0..total_chunks) |i| {
+        const start = i * CHUNK_SIZE;
+        const end = @min(start + CHUNK_SIZE, payload.len);
+        const chunk = payload[start..end];
+
+        const is_last = (i == total_chunks - 1);
+        const command: protocol.Command = if (is_last) .DataEnd else .DataChunk;
+        const seq_num: u32 = @intCast(i);
+
+        const wire = try translation.buildOutboundPacket(
+            io,
+            allocator,
+            src,
+            dst,
+            conn_id,
+            seq_num,
+            command,
+            chunk,
+            key,
+        );
+
+        items[i] = wire;
+        built += 1;
+    }
+
+    return WirePacketList{ .items = items, .allocator = allocator };
 }
 
-pub const DecodedConnId = struct {
-    base_id: u32,
-    seq: u32,
-    flags: u8,
-};
+const testing = std.testing;
 
-pub fn decodeConnId(conn_id: u64) DecodedConnId {
-    return DecodedConnId{
-        .base_id = @truncate(conn_id & 0x00000000FFFFFFFF),
-        .seq = @truncate((conn_id >> 32) & 0x00FFFFFF),
-        .flags = @truncate((conn_id >> 56) & 0xFF),
-    };
+test "fragmentPayload: kleine Payload erzeugt ein einzelnes .Data Paket" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    const key: [translation.KEY_SIZE]u8 = [_]u8{0x11} ** translation.KEY_SIZE;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    const list = try fragmentPayload(io, allocator, src, dst, 1, "kleine payload", key);
+    defer list.deinit();
+
+    try testing.expectEqual(@as(usize, 1), list.items.len);
+
+    const decrypted = try translation.decryptPacket(allocator, list.items[0], key);
+    defer allocator.free(decrypted);
+    const parsed = try header.parsePacket(decrypted);
+
+    try testing.expectEqual(protocol.Command.Data, parsed.command);
+    try testing.expectEqualSlices(u8, "kleine payload", parsed.payload);
 }
 
-pub fn isLastFragment(conn_id: u64) bool {
-    const decoded = decodeConnId(conn_id);
-    return (decoded.flags & FLAG_LAST) != 0;
+test "fragmentPayload: große Payload wird in DataChunk/DataEnd aufgeteilt" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    const key: [translation.KEY_SIZE]u8 = [_]u8{0x22} ** translation.KEY_SIZE;
+    const src = [_]u8{0x03} ** 16;
+    const dst = [_]u8{0x04} ** 16;
+
+    const big_len = translation.MAX_PACKET_SIZE + 100;
+    const big_payload = try allocator.alloc(u8, big_len);
+    defer allocator.free(big_payload);
+    for (big_payload, 0..) |*b, idx| b.* = @truncate(idx);
+
+    const list = try fragmentPayload(io, allocator, src, dst, 42, big_payload, key);
+    defer list.deinit();
+
+    try testing.expectEqual(@as(usize, 2), list.items.len);
+
+    var reassembled: std.ArrayListUnmanaged(u8) = .empty;
+    defer reassembled.deinit(allocator);
+
+    for (list.items, 0..) |wire, idx| {
+        const decrypted = try translation.decryptPacket(allocator, wire, key);
+        defer allocator.free(decrypted);
+        const parsed = try header.parsePacket(decrypted);
+
+        try testing.expectEqual(@as(u64, 42), parsed.header.inner.conn_id);
+        try testing.expectEqual(@as(u32, @intCast(idx)), parsed.header.inner.seq_num);
+
+        if (idx == list.items.len - 1) {
+            try testing.expectEqual(protocol.Command.DataEnd, parsed.command);
+        } else {
+            try testing.expectEqual(protocol.Command.DataChunk, parsed.command);
+        }
+
+        try reassembled.appendSlice(allocator, parsed.payload);
+    }
+
+    try testing.expectEqualSlices(u8, big_payload, reassembled.items);
 }
