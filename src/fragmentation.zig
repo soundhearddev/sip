@@ -8,7 +8,7 @@ pub const FragmentationError = error{
     BufferTooSmall,
 } || std.mem.Allocator.Error || translation.TranslationError;
 
-pub const CHUNK_SIZE: usize = translation.MAX_PACKET_SIZE - (1024 * 1024); // 15 MiB
+pub const CHUNK_SIZE: usize = translation.MAX_PACKET_SIZE - (header.HEADER_SIZE + translation.NONCE_SIZE + translation.TAG_SIZE);
 
 pub const MAX_CHUNKS: usize = std.math.maxInt(u32);
 
@@ -46,8 +46,8 @@ pub fn fragmentPayload(
         errdefer allocator.free(wire);
 
         const items = try allocator.alloc([]u8, 1);
+        errdefer allocator.free(items);
         items[0] = wire;
-
         return WirePacketList{ .items = items, .allocator = allocator };
     }
 
@@ -61,6 +61,10 @@ pub fn fragmentPayload(
         allocator.free(items);
     }
 
+    const plain_cap = translation.NONCE_SIZE + header.INNER_HEADER_SIZE + CHUNK_SIZE + translation.TAG_SIZE;
+    const plain_buf = try allocator.alloc(u8, plain_cap);
+    defer allocator.free(plain_buf);
+
     for (0..total_chunks) |i| {
         const start = i * CHUNK_SIZE;
         const end = @min(start + CHUNK_SIZE, payload.len);
@@ -70,9 +74,10 @@ pub fn fragmentPayload(
         const command: protocol.Command = if (is_last) .DataEnd else .DataChunk;
         const seq_num: u32 = @intCast(i);
 
-        const wire = try translation.buildOutboundPacket(
+        const wire = try translation.buildOutboundPacketInto(
             io,
             allocator,
+            plain_buf,
             src,
             dst,
             conn_id,
@@ -151,4 +156,69 @@ test "fragmentPayload: große Payload wird in DataChunk/DataEnd aufgeteilt" {
     }
 
     try testing.expectEqualSlices(u8, big_payload, reassembled.items);
+}
+
+test "fragmentPayload: leere Payload" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    const key: [translation.KEY_SIZE]u8 = [_]u8{0x33} ** translation.KEY_SIZE;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    const list = try fragmentPayload(io, allocator, src, dst, 1, "", key);
+    defer list.deinit();
+
+    try testing.expectEqual(@as(usize, 1), list.items.len);
+
+    const decrypted = try translation.decryptPacket(allocator, list.items[0], key);
+    defer allocator.free(decrypted);
+    const parsed = try header.parsePacket(decrypted);
+
+    try testing.expectEqual(protocol.Command.Data, parsed.command);
+    try testing.expectEqualSlices(u8, "", parsed.payload);
+}
+
+test "fragmentPayload: exakt CHUNK_SIZE Payload ergibt einen Chunk" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    const key: [translation.KEY_SIZE]u8 = [_]u8{0x44} ** translation.KEY_SIZE;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    const payload = try allocator.alloc(u8, CHUNK_SIZE);
+    defer allocator.free(payload);
+    @memset(payload, 0xAB);
+
+    const list = try fragmentPayload(io, allocator, src, dst, 2, payload, key);
+    defer list.deinit();
+
+    try testing.expectEqual(@as(usize, 1), list.items.len);
+}
+
+test "fragmentPayload: CHUNK_SIZE + 1 ergibt zwei Chunks" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    const key: [translation.KEY_SIZE]u8 = [_]u8{0x55} ** translation.KEY_SIZE;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    const payload = try allocator.alloc(u8, translation.MAX_PACKET_SIZE + 1);
+    defer allocator.free(payload);
+    @memset(payload, 0xCD);
+
+    const list = try fragmentPayload(io, allocator, src, dst, 3, payload, key);
+    defer list.deinit();
+
+    try testing.expectEqual(@as(usize, 2), list.items.len);
+
+    const d0 = try translation.decryptPacket(allocator, list.items[0], key);
+    defer allocator.free(d0);
+    const d1 = try translation.decryptPacket(allocator, list.items[1], key);
+    defer allocator.free(d1);
+
+    try testing.expectEqual(protocol.Command.DataChunk, (try header.parsePacket(d0)).command);
+    try testing.expectEqual(protocol.Command.DataEnd, (try header.parsePacket(d1)).command);
 }

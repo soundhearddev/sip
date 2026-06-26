@@ -42,7 +42,20 @@ pub fn build(b: *std.Build) void {
     const run_header_tests = b.addRunArtifact(header_tests);
     b.step("test-header", "Run header tests").dependOn(&run_header_tests.step);
 
+    const handshake_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/handshake.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_handshake_tests = b.addRunArtifact(handshake_tests);
+    b.step("test-handshake", "Run handshake tests").dependOn(&run_handshake_tests.step);
+
     const test_all = b.step("test", "Run all tests");
     test_all.dependOn(&run_translation_tests.step);
     test_all.dependOn(&run_header_tests.step);
+    test_all.dependOn(&run_fragmentation_tests.step);
+    test_all.dependOn(&run_handshake_tests.step);
 }

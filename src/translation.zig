@@ -29,21 +29,93 @@ pub fn buildOutboundPacket(
     payload: []const u8,
     key: [KEY_SIZE]u8,
 ) ![]u8 {
-    const raw_len = header.HEADER_SIZE + payload.len;
-    const raw = try allocator.alloc(u8, raw_len);
-    defer allocator.free(raw);
+    var len_buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len_buf, @intCast(payload.len), .big);
 
-    _ = try header.buildPacket(
-        raw,
-        src,
-        dst,
-        conn_id,
-        seq_num,
-        command,
-        payload,
+    const out_len = header.OUTER_HEADER_SIZE + NONCE_SIZE + header.INNER_HEADER_SIZE + payload.len + TAG_SIZE;
+    const out = try allocator.alloc(u8, out_len);
+    errdefer allocator.free(out);
+
+    const hdr_slice = out[0..header.OUTER_HEADER_SIZE];
+    hdr_slice[0] = header.MAGIC;
+    hdr_slice[1] = @intFromEnum(command);
+    @memcpy(hdr_slice[2..6], &len_buf);
+    @memcpy(hdr_slice[6..22], &src);
+    @memcpy(hdr_slice[22..38], &dst);
+
+    var nonce: [NONCE_SIZE]u8 = undefined;
+    const rng: std.Random.IoSource = .{ .io = io };
+    rng.interface().bytes(&nonce);
+    @memcpy(out[header.OUTER_HEADER_SIZE..][0..NONCE_SIZE], &nonce);
+
+    const plain_len = header.INNER_HEADER_SIZE + payload.len;
+    const plain = try allocator.alloc(u8, plain_len);
+    defer allocator.free(plain);
+    std.mem.writeInt(u64, plain[0..8], conn_id, .little);
+    std.mem.writeInt(u32, plain[8..12], seq_num, .little);
+    @memcpy(plain[header.INNER_HEADER_SIZE..], payload);
+
+    const ct_start = header.OUTER_HEADER_SIZE + NONCE_SIZE;
+    const ct_buf = out[ct_start..][0 .. plain_len + TAG_SIZE];
+    std.crypto.aead.chacha_poly.ChaCha20Poly1305.encrypt(
+        ct_buf[0..plain_len],
+        ct_buf[plain_len..][0..TAG_SIZE],
+        plain,
+        hdr_slice,
+        nonce,
+        key,
     );
+    return out;
+}
 
-    return try encryptPacket(io, allocator, raw, key);
+pub fn buildOutboundPacketInto(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    plain_buf: []u8,
+    src: [16]u8,
+    dst: [16]u8,
+    conn_id: u64,
+    seq_num: u32,
+    command: protocol.Command,
+    payload: []const u8,
+    key: [KEY_SIZE]u8,
+) ![]u8 {
+    var len_buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len_buf, @intCast(payload.len), .big);
+
+    const out_len = header.OUTER_HEADER_SIZE + NONCE_SIZE + header.INNER_HEADER_SIZE + payload.len + TAG_SIZE;
+    const out = try allocator.alloc(u8, out_len);
+    errdefer allocator.free(out);
+
+    const hdr_slice = out[0..header.OUTER_HEADER_SIZE];
+    hdr_slice[0] = header.MAGIC;
+    hdr_slice[1] = @intFromEnum(command);
+    @memcpy(hdr_slice[2..6], &len_buf);
+    @memcpy(hdr_slice[6..22], &src);
+    @memcpy(hdr_slice[22..38], &dst);
+
+    var nonce: [NONCE_SIZE]u8 = undefined;
+    const rng: std.Random.IoSource = .{ .io = io };
+    rng.interface().bytes(&nonce);
+    @memcpy(out[header.OUTER_HEADER_SIZE..][0..NONCE_SIZE], &nonce);
+
+    const plain_len = header.INNER_HEADER_SIZE + payload.len;
+    const plain = plain_buf[0..plain_len];
+    std.mem.writeInt(u64, plain[0..8], conn_id, .little);
+    std.mem.writeInt(u32, plain[8..12], seq_num, .little);
+    @memcpy(plain[header.INNER_HEADER_SIZE..], payload);
+
+    const ct_start = header.OUTER_HEADER_SIZE + NONCE_SIZE;
+    const ct_buf = out[ct_start..][0 .. plain_len + TAG_SIZE];
+    std.crypto.aead.chacha_poly.ChaCha20Poly1305.encrypt(
+        ct_buf[0..plain_len],
+        ct_buf[plain_len..][0..TAG_SIZE],
+        plain,
+        hdr_slice,
+        nonce,
+        key,
+    );
+    return out;
 }
 
 pub const InboundPacket = struct {
@@ -197,11 +269,11 @@ pub const MAX_CHUNKS_PER_TRANSFER: usize = 65536;
 
 const TransferState = struct {
     next_seq: u32,
-    chunk_paths: std.ArrayList([]u8),
+    chunks: std.ArrayListUnmanaged([]u8),
 
     fn deinit(self: *TransferState, allocator: std.mem.Allocator) void {
-        for (self.chunk_paths.items) |p| allocator.free(p);
-        self.chunk_paths.deinit(allocator);
+        for (self.chunks.items) |c| allocator.free(c);
+        self.chunks.deinit(allocator);
     }
 };
 
@@ -233,46 +305,25 @@ pub const Reassembler = struct {
         self.transfers.deinit();
     }
 
-    fn transferDir(self: *Reassembler, buf: []u8, conn_id: u64) ![]const u8 {
-        return std.fmt.bufPrint(buf, "{s}/{x}", .{ self.base_dir, conn_id });
-    }
-
-    fn chunkPath(self: *Reassembler, buf: []u8, conn_id: u64, seq_num: u32) ![]const u8 {
-        return std.fmt.bufPrint(buf, "{s}/{x}/{d}.chunk", .{ self.base_dir, conn_id, seq_num });
-    }
-
     fn writeChunk(self: *Reassembler, conn_id: u64, seq_num: u32, payload: []const u8) !void {
-        var dir_buf: [300]u8 = undefined;
-        const dir = try self.transferDir(&dir_buf, conn_id);
-        std.Io.Dir.cwd().createDirPath(self.io, dir) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-
-        var path_buf: [300]u8 = undefined;
-        const path = try self.chunkPath(&path_buf, conn_id, seq_num);
-
-        const f = try std.Io.Dir.cwd().createFile(self.io, path, .{});
-        defer f.close(self.io);
-        var iobuf: [4096]u8 = undefined;
-        var w = f.writer(self.io, &iobuf);
-        try w.interface.writeAll(payload);
-        try w.flush();
-
         const gop = try self.transfers.getOrPut(conn_id);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{
                 .next_seq = 0,
-                .chunk_paths = .empty,
+                .chunks = .empty,
             };
         }
+        errdefer if (!gop.found_existing) {
+            _ = self.transfers.remove(conn_id);
+        };
         const state = gop.value_ptr;
 
         if (seq_num != state.next_seq) return ReassemblyError.UnexpectedSequenceNumber;
-        if (state.chunk_paths.items.len >= MAX_CHUNKS_PER_TRANSFER) return ReassemblyError.TooManyChunks;
+        if (state.chunks.items.len >= MAX_CHUNKS_PER_TRANSFER) return ReassemblyError.TooManyChunks;
 
-        const owned_path = try self.allocator.dupe(u8, path);
-        try state.chunk_paths.append(self.allocator, owned_path);
+        const owned = try self.allocator.dupe(u8, payload);
+        errdefer self.allocator.free(owned);
+        try state.chunks.append(self.allocator, owned);
         state.next_seq += 1;
     }
 
@@ -284,12 +335,14 @@ pub const Reassembler = struct {
             .Data => {
                 try self.writeChunk(conn_id, seq_num, packet.payload);
 
-                var state = self.transfers.get(conn_id) orelse return ReassemblyError.UnknownTransfer;
-                _ = self.transfers.remove(conn_id);
-
-                const owned_slice = try state.chunk_paths.toOwnedSlice(self.allocator);
+                var kv = self.transfers.fetchRemove(conn_id) orelse return ReassemblyError.UnknownTransfer;
+                const owned_slice = kv.value.chunks.toOwnedSlice(self.allocator) catch {
+                    kv.value.deinit(self.allocator);
+                    return error.OutOfMemory;
+                };
                 return .{ .complete = owned_slice };
             },
+
             .DataChunk => {
                 try self.writeChunk(conn_id, seq_num, packet.payload);
                 return .pending;
@@ -297,12 +350,14 @@ pub const Reassembler = struct {
             .DataEnd => {
                 try self.writeChunk(conn_id, seq_num, packet.payload);
 
-                var state = self.transfers.get(conn_id) orelse return ReassemblyError.UnknownTransfer;
-                _ = self.transfers.remove(conn_id);
-
-                const owned_slice = try state.chunk_paths.toOwnedSlice(self.allocator);
+                var kv = self.transfers.fetchRemove(conn_id) orelse return ReassemblyError.UnknownTransfer;
+                const owned_slice = kv.value.chunks.toOwnedSlice(self.allocator) catch {
+                    kv.value.deinit(self.allocator);
+                    return error.OutOfMemory;
+                };
                 return .{ .complete = owned_slice };
             },
+
             else => return .pending,
         }
     }
@@ -312,13 +367,8 @@ pub const Reassembler = struct {
             var state = kv.value;
             state.deinit(self.allocator);
         }
-
-        var dir_buf: [300]u8 = undefined;
-        const dir = self.transferDir(&dir_buf, conn_id) catch return;
-        std.Io.Dir.cwd().deleteTree(self.io, dir) catch {};
     }
 };
-
 const testing = std.testing;
 
 test "encrypt -> decrypt Roundtrip" {
@@ -453,8 +503,8 @@ test "Reassembler: DataChunk + DataEnd liefert alle Pfade in Reihenfolge" {
                 defer for (paths) |p| allocator.free(p);
 
                 try testing.expectEqual(@as(usize, 2), paths.len);
-                try testing.expect(std.mem.endsWith(u8, paths[0], "0.chunk"));
-                try testing.expect(std.mem.endsWith(u8, paths[1], "1.chunk"));
+                try testing.expectEqualSlices(u8, "chunk", paths[0]);
+                try testing.expectEqualSlices(u8, "end", paths[1]);
             },
             .pending => return error.ExpectedComplete,
         }
@@ -488,4 +538,74 @@ test "Reassembler: abort räumt Zustand und Dateien auf" {
         break :blk true;
     };
     try testing.expect(!dir_exists);
+}
+
+test "buildOutboundPacketInto: Roundtrip" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    const key: [KEY_SIZE]u8 = [_]u8{0xAB} ** KEY_SIZE;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+    const payload = "test into";
+
+    const plain_cap = NONCE_SIZE + header.INNER_HEADER_SIZE + payload.len + TAG_SIZE;
+    const plain_buf = try allocator.alloc(u8, plain_cap);
+    defer allocator.free(plain_buf);
+
+    const wire = try buildOutboundPacketInto(io, allocator, plain_buf, src, dst, 1, 0, .Data, payload, key);
+    defer allocator.free(wire);
+
+    const decrypted = try decryptPacket(allocator, wire, key);
+    defer allocator.free(decrypted);
+    const parsed = try header.parsePacket(decrypted);
+
+    try testing.expectEqualSlices(u8, payload, parsed.payload);
+    try testing.expectEqual(@as(u64, 1), parsed.header.inner.conn_id);
+}
+
+test "Reassembler: Data liefert sofort complete" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    var r = Reassembler.init(io, allocator, "");
+    defer r.deinit();
+
+    const conn_id: u64 = 0x01;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    var buf: [header.HEADER_SIZE + 4]u8 = undefined;
+    _ = try header.buildPacket(&buf, src, dst, conn_id, 0, .Data, "data");
+    const parsed = try header.parsePacket(&buf);
+    const result = try r.feed(parsed);
+
+    switch (result) {
+        .complete => |chunks| {
+            defer allocator.free(chunks);
+            defer for (chunks) |c| allocator.free(c);
+            try testing.expectEqual(@as(usize, 1), chunks.len);
+            try testing.expectEqualSlices(u8, "data", chunks[0]);
+        },
+        .pending => return error.ExpectedComplete,
+    }
+}
+
+test "Reassembler: UnexpectedSequenceNumber räumt neuen State auf" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    var r = Reassembler.init(io, allocator, "");
+    defer r.deinit();
+
+    const conn_id: u64 = 0x02;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    var buf: [header.HEADER_SIZE + 4]u8 = undefined;
+    _ = try header.buildPacket(&buf, src, dst, conn_id, 1, .DataChunk, "data"); // seq 1 statt 0
+    const parsed = try header.parsePacket(&buf);
+
+    try testing.expectError(ReassemblyError.UnexpectedSequenceNumber, r.feed(parsed));
+    try testing.expect(!r.transfers.contains(conn_id));
 }
