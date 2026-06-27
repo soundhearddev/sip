@@ -223,10 +223,10 @@ test "parse command" {
     const cmd1 = parseCommand(0x01);
     try std.testing.expectEqual(Command.discovery, cmd1);
 
-    const cmd_readfile = parseCommand(0x02);
+    const cmd_readfile = parseCommand(0x09);
     try std.testing.expectEqual(Command.ReadFile, cmd_readfile);
 
-    const cmd2 = parseCommand(0x09);
+    const cmd2 = parseCommand(0x06);
     try std.testing.expectEqual(Command.Keepalive, cmd2);
 
     const cmd_unknown = parseCommand(0xFF);

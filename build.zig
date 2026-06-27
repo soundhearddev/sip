@@ -31,6 +31,17 @@ pub fn build(b: *std.Build) void {
     const run_fragmentation_tests = b.addRunArtifact(fragmentation_tests);
     b.step("test-fragmentation", "Run fragmentation tests").dependOn(&run_fragmentation_tests.step);
 
+    const protocol_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/protocol.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_protocol_tests = b.addRunArtifact(protocol_tests);
+    b.step("test-protocol", "Run protocol tests").dependOn(&run_protocol_tests.step);
+
     const header_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/header.zig"),
