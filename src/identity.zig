@@ -37,10 +37,6 @@ pub fn genId(pub_bytes: [32]u8, nonce: [16]u8) [32]u8 {
     return out;
 }
 
-pub fn formatSipAddress(buf: []u8, base: [16]u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "sip1{x}", .{base[0..16]});
-}
-
 pub fn encryptPrivateKey(
     out: *[ENCRYPTED_PRIVATE_LEN]u8,
     secret: [64]u8,
