@@ -302,3 +302,125 @@ test "unexpected peer identity is rejected" {
         completeHandshake(alice_keys, alice_address, alice_eph, msg_from_mallory, expected_bob_address),
     );
 }
+
+test "performKeyExchange completes mutual handshake over real sockets" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+
+    const fds = try synet.makeSocketPair();
+    const sock_a: synet.Socket = fds[0];
+    const sock_b: synet.Socket = fds[1];
+    defer synet.close(sock_a);
+    defer synet.close(sock_b);
+
+    const alice_id_kp = Ed25519.KeyPair.generate(io);
+    const bob_id_kp = Ed25519.KeyPair.generate(io);
+
+    const alice_keys = identity.KeyPair{
+        .public = alice_id_kp.public_key.toBytes(),
+        .secret = alice_id_kp.secret_key.toBytes(),
+    };
+    const bob_keys = identity.KeyPair{
+        .public = bob_id_kp.public_key.toBytes(),
+        .secret = bob_id_kp.secret_key.toBytes(),
+    };
+
+    const alice_address = identity.baseAddress(alice_keys.public);
+    const bob_address = identity.baseAddress(bob_keys.public);
+
+    const Ctx = struct {
+        io: std.Io,
+        allocator: std.mem.Allocator,
+        sock: synet.Socket,
+        keys: identity.KeyPair,
+        address: [SIP_ADDRESS_SIZE]u8,
+        is_initiator: bool,
+        peer_address: ?[SIP_ADDRESS_SIZE]u8,
+        result: ?SessionKeys = null,
+
+        fn run(ctx: *@This()) !void {
+            ctx.result = try performKeyExchange(
+                ctx.io,
+                ctx.allocator,
+                ctx.sock,
+                ctx.keys,
+                ctx.address,
+                ctx.is_initiator,
+                ctx.peer_address,
+            );
+        }
+    };
+
+    var alice_ctx = Ctx{
+        .io = io,
+        .allocator = allocator,
+        .sock = sock_a,
+        .keys = alice_keys,
+        .address = alice_address,
+        .is_initiator = true,
+        .peer_address = bob_address,
+    };
+    var bob_ctx = Ctx{
+        .io = io,
+        .allocator = allocator,
+        .sock = sock_b,
+        .keys = bob_keys,
+        .address = bob_address,
+        .is_initiator = false,
+        .peer_address = alice_address,
+    };
+
+    const alice_thread = try std.Thread.spawn(.{}, Ctx.run, .{&alice_ctx});
+    const bob_thread = try std.Thread.spawn(.{}, Ctx.run, .{&bob_ctx});
+    alice_thread.join();
+    bob_thread.join();
+
+    var alice_session = alice_ctx.result.?;
+    defer alice_session.deinit();
+    var bob_session = bob_ctx.result.?;
+    defer bob_session.deinit();
+
+    try std.testing.expectEqualSlices(u8, &alice_session.tx, &bob_session.rx);
+    try std.testing.expectEqualSlices(u8, &alice_session.rx, &bob_session.tx);
+    try std.testing.expectEqual(alice_session.conn_id, bob_session.conn_id);
+    try std.testing.expectEqualSlices(u8, &alice_session.peer_address, &bob_address);
+    try std.testing.expectEqualSlices(u8, &bob_session.peer_address, &alice_address);
+}
+
+test "performKeyExchange rejects malformed frame from peer" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+
+    const fds = try synet.makeSocketPair();
+    const sock_a: synet.Socket = fds[0];
+    const sock_b: synet.Socket = fds[1];
+    defer synet.close(sock_a);
+    defer synet.close(sock_b);
+
+    const alice_id_kp = Ed25519.KeyPair.generate(io);
+    const alice_keys = identity.KeyPair{
+        .public = alice_id_kp.public_key.toBytes(),
+        .secret = alice_id_kp.secret_key.toBytes(),
+    };
+    const alice_address = identity.baseAddress(alice_keys.public);
+
+    // Bob schickt absichtlich Müll statt einer gültigen HandshakeMessage.
+    const bob_thread = try std.Thread.spawn(.{}, struct {
+        fn run(sock: synet.Socket) !void {
+            try sendFramed(sock, "not a valid handshake message");
+        }
+    }.run, .{sock_b});
+    defer bob_thread.join();
+
+    const result = performKeyExchange(
+        io,
+        allocator,
+        sock_a,
+        alice_keys,
+        alice_address,
+        true,
+        null,
+    );
+
+    try std.testing.expectError(error.InvalidPeerMessage, result);
+}

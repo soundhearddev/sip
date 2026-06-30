@@ -93,3 +93,100 @@ pub fn parsePublicKey(bytes: []const u8) ![32]u8 {
     if (bytes.len != 32) return SipError.InvalidLength;
     return bytes[0..32].*;
 }
+
+const testing = std.testing;
+
+test "encryptPrivateKey/decryptPrivateKey Roundtrip" {
+    const io = std.testing.io;
+    const kp = generateKeyPair(io);
+
+    var salt: [16]u8 = undefined;
+    io.randomSecure(&salt) catch unreachable;
+    var nonce: [crypto.aead.aes_gcm.Aes256Gcm.nonce_length]u8 = undefined;
+    io.randomSecure(&nonce) catch unreachable;
+
+    var blob: [ENCRYPTED_PRIVATE_LEN]u8 = undefined;
+    try encryptPrivateKey(&blob, kp.secret, "correct horse battery staple", salt, nonce);
+
+    const decrypted = try decryptPrivateKey(&blob, "correct horse battery staple");
+
+    try testing.expectEqualSlices(u8, &kp.secret, &decrypted);
+}
+
+test "decryptPrivateKey lehnt falsches Passwort ab" {
+    const io = std.testing.io;
+    const kp = generateKeyPair(io);
+
+    var salt: [16]u8 = undefined;
+    io.randomSecure(&salt) catch unreachable;
+    var nonce: [crypto.aead.aes_gcm.Aes256Gcm.nonce_length]u8 = undefined;
+    io.randomSecure(&nonce) catch unreachable;
+
+    var blob: [ENCRYPTED_PRIVATE_LEN]u8 = undefined;
+    try encryptPrivateKey(&blob, kp.secret, "right-password", salt, nonce);
+
+    try testing.expectError(SipError.DecryptionFailed, decryptPrivateKey(&blob, "wrong-password"));
+}
+
+test "decryptPrivateKey lehnt falsche Länge ab" {
+    const too_short = [_]u8{0} ** 10;
+    try testing.expectError(SipError.InvalidLength, decryptPrivateKey(&too_short, "irrelevant"));
+}
+
+test "baseAddress ist deterministisch" {
+    const pub_bytes = [_]u8{0xAB} ** 32;
+    const a = baseAddress(pub_bytes);
+    const b = baseAddress(pub_bytes);
+    try testing.expectEqualSlices(u8, &a, &b);
+}
+
+test "baseAddress unterscheidet verschiedene Keys" {
+    const pub_a = [_]u8{0x01} ** 32;
+    const pub_b = [_]u8{0x02} ** 32;
+    const addr_a = baseAddress(pub_a);
+    const addr_b = baseAddress(pub_b);
+    try testing.expect(!std.mem.eql(u8, &addr_a, &addr_b));
+}
+
+test "genId ist deterministisch bei gleichem nonce" {
+    const pub_bytes = [_]u8{0xCC} ** 32;
+    const nonce = [_]u8{0x01} ** 16;
+    const id_a = genId(pub_bytes, nonce);
+    const id_b = genId(pub_bytes, nonce);
+    try testing.expectEqualSlices(u8, &id_a, &id_b);
+}
+
+test "genId unterscheidet sich bei verschiedenem nonce" {
+    const pub_bytes = [_]u8{0xCC} ** 32;
+    const nonce_a = [_]u8{0x01} ** 16;
+    const nonce_b = [_]u8{0x02} ** 16;
+    const id_a = genId(pub_bytes, nonce_a);
+    const id_b = genId(pub_bytes, nonce_b);
+    try testing.expect(!std.mem.eql(u8, &id_a, &id_b));
+}
+
+test "parsePublicKey akzeptiert 32 Byte" {
+    const bytes = [_]u8{0x42} ** 32;
+    const pk = try parsePublicKey(&bytes);
+    try testing.expectEqualSlices(u8, &bytes, &pk);
+}
+
+test "parsePublicKey lehnt falsche Länge ab" {
+    const too_short = [_]u8{0} ** 10;
+    try testing.expectError(SipError.InvalidLength, parsePublicKey(&too_short));
+}
+
+test "formatSipAddress formatiert Name und Hex-Adresse" {
+    var buf: [80]u8 = undefined;
+    const base = [_]u8{ 0xDE, 0xAD, 0xBE, 0xEF } ++ [_]u8{0x00} ** 12;
+    const result = try formatSipAddress(&buf, "alice", base);
+    try testing.expect(std.mem.startsWith(u8, result, "alice."));
+    try testing.expect(std.mem.indexOf(u8, result, "deadbeef") != null);
+}
+
+test "generateKeyPair erzeugt unterschiedliche Keys" {
+    const io = std.testing.io;
+    const kp_a = generateKeyPair(io);
+    const kp_b = generateKeyPair(io);
+    try testing.expect(!std.mem.eql(u8, &kp_a.public, &kp_b.public));
+}

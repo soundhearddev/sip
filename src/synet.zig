@@ -32,6 +32,14 @@ pub fn createTcpSocket() SynetError!Socket {
     return @intCast(checked);
 }
 
+pub fn makeSocketPair() ![2]Socket {
+    var fds: [2]i32 = undefined;
+    const rc = linux.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds);
+    const signed: isize = @bitCast(rc);
+    if (signed < 0) return error.SocketCreateFailed;
+    return .{ fds[0], fds[1] };
+}
+
 pub fn buildSockaddrIn(addr_bytes: [4]u8, port: u16) posix.sockaddr.in {
     return posix.sockaddr.in{
         .family = posix.AF.INET,

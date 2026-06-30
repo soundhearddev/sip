@@ -609,3 +609,66 @@ test "Reassembler: UnexpectedSequenceNumber räumt neuen State auf" {
     try testing.expectError(ReassemblyError.UnexpectedSequenceNumber, r.feed(parsed));
     try testing.expect(!r.transfers.contains(conn_id));
 }
+
+test "encryptPacket lehnt zu kurzes raw_packet ab" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+    const key: [KEY_SIZE]u8 = [_]u8{0x01} ** KEY_SIZE;
+    const too_short = [_]u8{0} ** 10;
+
+    try testing.expectError(TranslationError.PacketTooSmall, encryptPacket(io, allocator, &too_short, key));
+}
+
+test "Reassembler: TooManyChunks bricht ab" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    var r = Reassembler.init(io, allocator, "");
+    defer r.deinit();
+
+    const conn_id: u64 = 0x99;
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    var i: u32 = 0;
+    while (i < MAX_CHUNKS_PER_TRANSFER) : (i += 1) {
+        var buf: [header.HEADER_SIZE + 1]u8 = undefined;
+        _ = try header.buildPacket(&buf, src, dst, conn_id, i, .DataChunk, "x");
+        const parsed = try header.parsePacket(&buf);
+        _ = try r.feed(parsed);
+    }
+
+    var overflow_buf: [header.HEADER_SIZE + 1]u8 = undefined;
+    _ = try header.buildPacket(&overflow_buf, src, dst, conn_id, i, .DataChunk, "x");
+    const overflow_parsed = try header.parsePacket(&overflow_buf);
+
+    try testing.expectError(ReassemblyError.TooManyChunks, r.feed(overflow_parsed));
+}
+
+test "Reassembler: zwei parallele Transfers stören sich nicht" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+
+    var r = Reassembler.init(io, allocator, "");
+    defer r.deinit();
+
+    const src = [_]u8{0x01} ** 16;
+    const dst = [_]u8{0x02} ** 16;
+
+    var buf_a: [header.HEADER_SIZE + 1]u8 = undefined;
+    _ = try header.buildPacket(&buf_a, src, dst, 0xAAAA, 0, .DataChunk, "a");
+    const parsed_a = try header.parsePacket(&buf_a);
+    _ = try r.feed(parsed_a);
+
+    var buf_b: [header.HEADER_SIZE + 1]u8 = undefined;
+    _ = try header.buildPacket(&buf_b, src, dst, 0xBBBB, 0, .DataChunk, "b");
+    const parsed_b = try header.parsePacket(&buf_b);
+    _ = try r.feed(parsed_b);
+
+    try testing.expect(r.transfers.contains(0xAAAA));
+    try testing.expect(r.transfers.contains(0xBBBB));
+
+    r.abort(0xAAAA);
+    try testing.expect(!r.transfers.contains(0xAAAA));
+    try testing.expect(r.transfers.contains(0xBBBB));
+}

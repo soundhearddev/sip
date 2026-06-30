@@ -181,12 +181,10 @@ pub fn parseOuter(data: []const u8) !OuterHeader {
     if (outer.magic != MAGIC) return error.InvalidMagic;
     return outer;
 }
+
 const testing = std.testing;
 
 test "buildPacket schreibt MAGIC und Command korrekt" {
-    const allocator = testing.allocator;
-    _ = allocator;
-
     var buf: [HEADER_SIZE + 4]u8 = undefined;
     const src = [_]u8{0x01} ** 16;
     const dst = [_]u8{0x02} ** 16;
@@ -197,6 +195,17 @@ test "buildPacket schreibt MAGIC und Command korrekt" {
     try testing.expectEqual(@intFromEnum(protocol.Command.Data), pkt[1]);
 }
 
+test "buildPacket schreibt Length korrekt" {
+    const payload = "hallo welt";
+    var buf: [HEADER_SIZE + payload.len]u8 = undefined;
+    const src = [_]u8{0x00} ** 16;
+    const dst = [_]u8{0x00} ** 16;
+
+    const pkt = try buildPacket(&buf, src, dst, 0, 0, .Data, payload);
+    const length = std.mem.readInt(u32, pkt[2..6], .big);
+
+    try testing.expectEqual(@as(u32, payload.len), length);
+}
 test "buildPacket schreibt src und dst korrekt" {
     var buf: [HEADER_SIZE + 0]u8 = undefined;
     const src = [_]u8{0xAA} ** 16;
@@ -219,6 +228,17 @@ test "buildPacket schreibt conn_id korrekt (little-endian)" {
     try testing.expectEqual(@as(u64, 0xDEADBEEFCAFEBABE), conn_id);
 }
 
+test "buildPacket schreibt seq_num korrekt (little-endian)" {
+    var buf: [HEADER_SIZE]u8 = undefined;
+    const src = [_]u8{0x00} ** 16;
+    const dst = [_]u8{0x00} ** 16;
+
+    const pkt = try buildPacket(&buf, src, dst, 0, 0xCAFEBABE, .Data, "");
+
+    const seq_num = std.mem.readInt(u32, pkt[46..50], .little);
+    try testing.expectEqual(@as(u32, 0xCAFEBABE), seq_num);
+}
+
 test "buildPacket schreibt payload korrekt" {
     const payload = "hallo welt";
     var buf: [HEADER_SIZE + payload.len]u8 = undefined;
@@ -236,13 +256,14 @@ test "parsePacket Roundtrip" {
     const src = [_]u8{0x11} ** 16;
     const dst = [_]u8{0x22} ** 16;
 
-    const pkt = try buildPacket(&buf, src, dst, 0xCAFE, 0, .Data, payload);
+    const pkt = try buildPacket(&buf, src, dst, 0xCAFE, 7, .Data, payload);
     const parsed = try parsePacket(pkt);
 
     try testing.expectEqual(MAGIC, parsed.header.outer.magic);
     try testing.expectEqualSlices(u8, &src, &parsed.header.outer.src);
     try testing.expectEqualSlices(u8, &dst, &parsed.header.outer.dst);
     try testing.expectEqual(@as(u64, 0xCAFE), parsed.header.inner.conn_id);
+    try testing.expectEqual(@as(u32, 7), parsed.header.inner.seq_num);
     try testing.expectEqualSlices(u8, payload, parsed.payload);
 }
 
@@ -280,4 +301,30 @@ test "parseOuter liest src/dst korrekt" {
 
     try testing.expectEqualSlices(u8, &src, &outer.src);
     try testing.expectEqualSlices(u8, &dst, &outer.dst);
+}
+
+test "parseOuter lehnt zu kurze Daten ab" {
+    const too_short = [_]u8{0} ** 10;
+    try testing.expectError(error.PacketTooSmall, parseOuter(&too_short));
+}
+
+test "buildDiscoveryPacket schreibt korrektes Format" {
+    var buf: [34]u8 = undefined;
+    const src = [_]u8{0x55} ** 16;
+    const dst = [_]u8{0x00} ** 16;
+
+    const pkt = try buildDiscoveryPacket(&buf, src, dst);
+
+    try testing.expectEqual(MAGIC, pkt[0]);
+    try testing.expectEqual(@intFromEnum(protocol.Command.discovery), pkt[1]);
+    try testing.expectEqualSlices(u8, &src, pkt[2..18]);
+    try testing.expectEqualSlices(u8, &dst, pkt[18..34]);
+}
+
+test "buildDiscoveryPacket lehnt zu kleinen Buffer ab" {
+    var buf: [33]u8 = undefined;
+    const src = [_]u8{0x00} ** 16;
+    const dst = [_]u8{0x00} ** 16;
+
+    try testing.expectError(error.BufferTooSmall, buildDiscoveryPacket(&buf, src, dst));
 }

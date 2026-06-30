@@ -54,7 +54,7 @@ pub const ProtocolError = error{
     PayloadTooLarge,
     BufferOverflow,
     InvalidUtf8,
-};
+} || std.mem.Allocator.Error;
 
 pub fn parseCommand(byte: u8) Command {
     return @enumFromInt(byte);
@@ -231,4 +231,117 @@ test "parse command" {
 
     const cmd_unknown = parseCommand(0xFF);
     try std.testing.expectEqual(@as(u8, 0xFF), @intFromEnum(cmd_unknown));
+}
+
+test "validate ListDir payload" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const valid_payload = "some/dir\x00";
+    try validatePayload(arena.allocator(), .ListDir, valid_payload);
+
+    const invalid_payload = "no-null-terminator";
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .ListDir, invalid_payload));
+
+    const empty_payload = "";
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .ListDir, empty_payload));
+}
+
+test "validate Execute payload" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: [16]u8 = undefined;
+    std.mem.writeInt(u16, buf[0..2], 4, .big);
+    @memcpy(buf[2..6], "ping");
+
+    try validatePayload(arena.allocator(), .Execute, buf[0..6]);
+
+    const too_short = [_]u8{0x00};
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .Execute, &too_short));
+
+    var bad_len_buf: [4]u8 = undefined;
+    std.mem.writeInt(u16, bad_len_buf[0..2], 100, .big); // behauptet 100 Byte cmd, hat aber nur 2
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .Execute, &bad_len_buf));
+}
+
+test "validate Flush/Close/Keepalive payload length limits" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const ok = [_]u8{0} ** 16;
+    try validatePayload(arena.allocator(), .Flush, &ok);
+    try validatePayload(arena.allocator(), .Close, &ok);
+    try validatePayload(arena.allocator(), .Keepalive, &ok);
+
+    const too_long = [_]u8{0} ** 17;
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .Flush, &too_long));
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .Close, &too_long));
+    try std.testing.expectError(ProtocolError.MalformedPayload, validatePayload(arena.allocator(), .Keepalive, &too_long));
+}
+
+test "validate payload rejects oversized payload regardless of command" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const huge = try arena.allocator().alloc(u8, 1024 * 1024 + 1);
+    try std.testing.expectError(ProtocolError.PayloadTooLarge, validatePayload(arena.allocator(), .Data, huge));
+}
+
+test "extractPath gibt korrekten Pfad zurück" {
+    const allocator = std.testing.allocator;
+    const payload = "foo/bar.txt\x00";
+    const path = try extractPath(allocator, payload);
+    defer allocator.free(path);
+    try std.testing.expectEqualSlices(u8, "foo/bar.txt", path);
+}
+
+test "extractPath lehnt fehlenden Null-Terminator ab" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(ProtocolError.MalformedPayload, extractPath(allocator, "no-terminator"));
+}
+
+test "extractPath lehnt leeren Payload ab" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(ProtocolError.MalformedPayload, extractPath(allocator, ""));
+}
+
+test "extractWriteFilePayload Roundtrip" {
+    const allocator = std.testing.allocator;
+    var buf: [256]u8 = undefined;
+    var i: usize = 0;
+
+    std.mem.writeInt(u16, buf[i..][0..2], 5, .big);
+    i += 2;
+    @memcpy(buf[i .. i + 5], "hello");
+    i += 5;
+    std.mem.writeInt(u32, buf[i..][0..4], 5, .big);
+    i += 4;
+    @memcpy(buf[i .. i + 5], "world");
+    i += 5;
+
+    const result = try extractWriteFilePayload(allocator, buf[0..i]);
+    defer allocator.free(result.path);
+    defer allocator.free(result.data);
+
+    try std.testing.expectEqualSlices(u8, "hello", result.path);
+    try std.testing.expectEqualSlices(u8, "world", result.data);
+}
+
+test "extractExecuteCommand Roundtrip" {
+    const allocator = std.testing.allocator;
+    var buf: [16]u8 = undefined;
+    std.mem.writeInt(u16, buf[0..2], 4, .big);
+    @memcpy(buf[2..6], "ping");
+
+    const cmd = try extractExecuteCommand(allocator, buf[0..6]);
+    defer allocator.free(cmd);
+
+    try std.testing.expectEqualSlices(u8, "ping", cmd);
+}
+
+test "extractExecuteCommand lehnt zu kurzen Payload ab" {
+    const allocator = std.testing.allocator;
+    const too_short = [_]u8{0x00};
+    try std.testing.expectError(ProtocolError.MalformedPayload, extractExecuteCommand(allocator, &too_short));
 }
